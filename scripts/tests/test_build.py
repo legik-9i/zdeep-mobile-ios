@@ -1,14 +1,13 @@
+import json
 import plistlib
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-import sys
-import plistlib
-import subprocess
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
-from unittest.mock import Mock
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zdeep_tools.build import BuildManager, BuildError
@@ -23,9 +22,18 @@ class BuildManagerTests(unittest.TestCase):
         (self.root / "ZDEEP").mkdir()
         (self.root / "ZDEEP" / "source.swift").write_text("let value = 1")
         self.runner = Mock(side_effect=self.fake_xcodebuild)
+        self.test_report = {
+            "testNodes": [{
+                "nodeType": "Test Case",
+                "nodeIdentifier": "ZDEEPTests/example()",
+                "result": "Passed",
+            }]
+        }
         self.manager = BuildManager(self.root, runner=self.runner, toolchain="Xcode 27")
 
     def fake_xcodebuild(self, command, **kwargs):
+        if command[:3] == ["xcrun", "xcresulttool", "get"]:
+            return Mock(returncode=0, stdout=json.dumps(self.test_report))
         if "build-for-testing" in command:
             derived = Path(command[command.index("-derivedDataPath") + 1])
             products = derived / "Build" / "Products"
@@ -89,6 +97,39 @@ class BuildManagerTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("xcodebuild завершился с кодом 65", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_cli_unit_suite_skips_network_preflight(self):
+        with patch("zdeep.preflight") as preflight, patch("zdeep.BuildManager") as manager, redirect_stdout(StringIO()):
+            manager.return_value.run.return_value = self.root / "results"
+            result = main([
+                "test", "--environment", "local", "--suite", "unit",
+                "--simulator", "SIM-1", "--skip-build",
+            ])
+        self.assertEqual(result, 0)
+        preflight.assert_not_called()
+
+    def test_only_filter_uses_xcresult_swift_testing_node_identifier(self):
+        self.manager.run("unit", "local", "SIM-1", only="ZDEEPTests/example()")
+        command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+        self.assertIn("-only-testing:ZDEEPTests/ZDEEPTests/example()", command)
+
+    def test_empty_test_report_is_rejected(self):
+        self.test_report = {"testNodes": []}
+        with self.assertRaisesRegex(BuildError, "ноль выполненных тестов"):
+            self.manager.run("unit", "local", "SIM-1")
+
+    def test_only_filter_must_match_exactly_one_reported_case(self):
+        with self.assertRaisesRegex(BuildError, "не совпал с ровно одним тестом в xcresult"):
+            self.manager.run("unit", "local", "SIM-1", only="ZDEEPTests/missing()")
+
+    def test_only_filter_rejects_extra_executed_cases(self):
+        self.test_report["testNodes"].append({
+            "nodeType": "Test Case",
+            "nodeIdentifier": "ZDEEPTests/another()",
+            "result": "Passed",
+        })
+        with self.assertRaisesRegex(BuildError, "ожидался ровно один выбранный тест"):
+            self.manager.run("unit", "local", "SIM-1", only="ZDEEPTests/example()")
 
 
 if __name__ == "__main__":

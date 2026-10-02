@@ -47,7 +47,7 @@ def parser():
     test = commands.add_parser("test", help="Запустить тесты local или test")
     test.add_argument("--environment", choices=["local", "test"], required=True)
     test.add_argument("--suite", choices=["unit", "integration", "ui", "all"], required=True)
-    test.add_argument("--only", help="Имя теста для выборочного запуска")
+    test.add_argument("--only", help="Полный nodeIdentifier из xcresult, например ZDEEPTests/example() или MyTests/testExample")
     test.add_argument("--skip-build", action="store_true")
     test.add_argument("--simulator", help="UDID, переопределяет конфигурацию")
     pre = commands.add_parser("preflight", help="Проверить доступность выбранного API")
@@ -64,12 +64,18 @@ def main(argv=None):
             artifact = BuildManager(ROOT).build(args.simulator)
             print(f"Тестовая сборка сохранена: {artifact}")
         elif args.command == "preflight":
-            print(preflight(args.environment, args.suite, config["api"][args.environment]))
+            if args.suite == "unit":
+                print("Для unit-набора проверка доступности API не требуется")
+            else:
+                print(preflight(args.environment, args.suite, config["api"][args.environment]))
         elif args.command == "test":
             simulator = args.simulator or config.get("simulator")
             if not simulator:
                 raise BuildError("Укажите --simulator или simulator в .local/development.json")
-            print(preflight(args.environment, args.suite, config["api"][args.environment]))
+            if args.suite == "unit":
+                print("Для unit-набора проверка доступности API не требуется")
+            else:
+                print(preflight(args.environment, args.suite, config["api"][args.environment]))
             runtime_settings = {
                 "ZDEEP_ENVIRONMENT": args.environment,
                 "ZDEEP_WEB_URL": config["web"][args.environment],

@@ -89,6 +89,47 @@ class BuildManager:
         visit(data)
         destination.write_bytes(plistlib.dumps(data))
 
+    @staticmethod
+    def validate_test_report(report: dict, only: str | None = None) -> list[dict]:
+        nodes = []
+
+        def visit(node):
+            if not isinstance(node, dict):
+                return
+            nodes.append(node)
+            for child in node.get("children", []):
+                visit(child)
+
+        for node in report.get("testNodes", []):
+            visit(node)
+
+        test_cases = [node for node in nodes if node.get("nodeType") == "Test Case"]
+        executed = [
+            node for node in test_cases
+            if node.get("result") in {"Passed", "Failed", "Expected Failure"}
+        ]
+        if not executed:
+            raise BuildError("xcresult содержит ноль выполненных тестов для выбранного набора")
+        if only is not None:
+            selected = [node for node in executed if node.get("nodeIdentifier") == only]
+            if len(selected) != 1:
+                raise BuildError(f"--only {only!r} не совпал с ровно одним тестом в xcresult")
+            if len(executed) != 1:
+                raise BuildError(f"Для --only ожидался ровно один выбранный тест; выполнено: {len(executed)}")
+        return executed
+
+    def _validate_result_bundle(self, result_bundle: Path, only: str | None = None) -> list[dict]:
+        command = ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(result_bundle)]
+        try:
+            result = self.runner(command, cwd=self.root, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            raise BuildError(f"Не удалось прочитать xcresult: xcresulttool завершился с кодом {exc.returncode}") from exc
+        try:
+            report = json.loads(result.stdout)
+        except (AttributeError, json.JSONDecodeError) as exc:
+            raise BuildError(f"xcresulttool вернул некорректный JSON: {exc}") from exc
+        return self.validate_test_report(report, only)
+
     def run(self, suite: str, environment: str, simulator: str, only: str | None = None, skip_build: bool = False, runtime_settings: dict[str, str] | None = None) -> Path:
         if suite not in {"unit", "integration", "ui", "all"}:
             raise BuildError(f"Неизвестный набор тестов: {suite}")
@@ -118,15 +159,18 @@ class BuildManager:
         self._configure_xctestrun(artifact, configured, runtime_settings or {"ZDEEP_ENVIRONMENT": environment})
         command = ["xcodebuild", "test-without-building", "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={simulator}", "-resultBundlePath", str(results / "Tests.xcresult")]
         selectors = {
-            "unit": [("only", "ZDEEPTests")],
-            "integration": [("only", "ZDEEPTests/WebSessionIntegrationTests")],
-            "ui": [("only", "ZDEEPUITests")],
-            "all": [("only", "ZDEEPTests"), ("only", "ZDEEPUITests")],
+            "unit": ["ZDEEPTests"],
+            "integration": ["ZDEEPTests/WebSessionIntegrationTests"],
+            "ui": ["ZDEEPUITests"],
+            "all": ["ZDEEPTests", "ZDEEPUITests"],
         }[suite]
-        for kind, target in selectors:
+        if only is not None and suite == "integration":
+            selectors = ["ZDEEPTests"]
+        for target in selectors:
             if suite == "unit":
                 command.append("-skip-testing:ZDEEPTests/WebSessionIntegrationTests")
             selected_target = target + ("/" + only if only else "")
-            command.append(f"-{kind}-testing:{selected_target}")
+            command.append(f"-only-testing:{selected_target}")
         self.runner(command, cwd=self.root, check=True)
+        self._validate_result_bundle(results / "Tests.xcresult", only)
         return results
