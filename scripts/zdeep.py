@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -14,10 +15,12 @@ DEFAULTS = {
     "web": {
         "local": "http://localhost:4005",
         "test": "https://5e9afe68-2ddd-4e58-8e57-5942cfa16099.website.twcstorage.ru",
+        "prod": "https://webview2.zdeep.ru",
     },
     "api": {
         "local": "http://localhost:4002",
         "test": "https://api.zdeep.ru/testing/",
+        "prod": "https://api.zdeep.ru",
     }
 }
 
@@ -74,6 +77,9 @@ def main(argv=None):
             }
             results = BuildManager(ROOT).run(args.suite, args.environment, simulator, args.only, args.skip_build, runtime_settings)
             print(f"Результаты: {results}")
+    except subprocess.CalledProcessError as exc:
+        print(f"Ошибка: xcodebuild завершился с кодом {exc.returncode}", file=sys.stderr)
+        return 1
     except (BuildError, PreflightError, OSError, json.JSONDecodeError) as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
         return 1

@@ -59,7 +59,10 @@ class BuildManager:
         destination.mkdir(parents=True, exist_ok=True)
         command = ["xcodebuild", "build-for-testing", "-project", str(self.root / "ZDEEP/ZDEEP.xcodeproj"), "-scheme", "ZDEEP", "-destination", f"platform=iOS Simulator,id={simulator}", "-derivedDataPath", str(derived), "CODE_SIGNING_ALLOWED=NO"]
         self.runner(command, cwd=self.root, check=True)
-        xctestruns = sorted((derived / "Build/Products").glob("*.xctestrun"))
+        xctestruns = sorted(
+            path for path in (derived / "Build/Products").glob("*.xctestrun")
+            if "-zdeep-run-" not in path.name
+        )
         if not xctestruns:
             raise BuildError("xcodebuild завершился без .xctestrun")
         metadata = {"fingerprint": fingerprint, "xctestrun": str(xctestruns[-1].relative_to(self.root)), "simulator": simulator}
@@ -108,7 +111,10 @@ class BuildManager:
             artifact = self.build(simulator)
 
         results = self.new_results_directory()
-        configured = results / "ZDEEP.xctestrun"
+        # Xcode resolves __TESTROOT__ and related markers relative to the
+        # .xctestrun file. Keep the configured copy beside the original in
+        # Build/Products; only the result bundle belongs in the run directory.
+        configured = artifact.with_name(f"{artifact.stem}-zdeep-run-{results.name}.xctestrun")
         self._configure_xctestrun(artifact, configured, runtime_settings or {"ZDEEP_ENVIRONMENT": environment})
         command = ["xcodebuild", "test-without-building", "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={simulator}", "-resultBundlePath", str(results / "Tests.xcresult")]
         selectors = {

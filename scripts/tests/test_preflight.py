@@ -2,9 +2,13 @@ import unittest
 from pathlib import Path
 import sys
 from unittest.mock import Mock
+from contextlib import redirect_stderr
+from io import StringIO
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zdeep_tools.preflight import PreflightError, check_local_health, preflight
+from zdeep import DEFAULTS, main
 
 
 class PreflightTests(unittest.TestCase):
@@ -19,6 +23,18 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaises(PreflightError):
             preflight("prod", "integration", "https://example.invalid", request=request)
         request.assert_not_called()
+
+    def test_prod_endpoints_are_constants_but_cli_never_requests_prod(self):
+        self.assertEqual(DEFAULTS["web"]["prod"], "https://webview2.zdeep.ru")
+        self.assertEqual(DEFAULTS["api"]["prod"], "https://api.zdeep.ru")
+        with patch("zdeep.preflight") as request, redirect_stderr(StringIO()):
+            for command in (
+                ["preflight", "--environment", "prod"],
+                ["test", "--environment", "prod", "--suite", "integration"],
+            ):
+                with self.assertRaises(SystemExit):
+                    main(command)
+            request.assert_not_called()
 
 
 if __name__ == "__main__":
