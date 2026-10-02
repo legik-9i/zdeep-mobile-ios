@@ -44,7 +44,30 @@ struct ContentView: View {
             .disabled(coordinator.isTransitioning)
 
             if coordinator.isWebViewOpen {
-                Text("WebView будет подключён в следующей задаче")
+                if let session = coordinator.activeWebSession {
+                    ZStack(alignment: .top) {
+                        WebViewHost(session: session)
+                        VStack(spacing: 8) {
+                            if session.isLoading {
+                                ProgressView()
+                                    .padding(8)
+                            }
+                            if let url = session.currentURL {
+                                Text(url.absoluteString)
+                                    .font(.caption2)
+                                    .textSelection(.enabled)
+                            }
+                            if let error = session.navigationError {
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(8)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 Button("Закрыть WebView") {
                     coordinator.closeWebView()
                 }

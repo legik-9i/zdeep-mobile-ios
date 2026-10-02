@@ -14,23 +14,11 @@ protocol WebSessionFactory {
 }
 
 @MainActor
-private final class PlaceholderWebSession: WebSessionHandle {
-    let id = UUID()
-    func close() {}
-}
-
-@MainActor
-private struct PlaceholderWebSessionFactory: WebSessionFactory {
-    func makeSession(for environment: AppEnvironment, endpoints: EnvironmentEndpoints) -> any WebSessionHandle {
-        PlaceholderWebSession()
-    }
-}
-
-@MainActor
 final class AppCoordinator: ObservableObject {
     @Published private(set) var environment: AppEnvironment
     @Published private(set) var isWebViewOpen = false
     @Published private(set) var isTransitioning = false
+    @Published private(set) var activeWebSession: WebSession?
 
     private let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
@@ -49,13 +37,17 @@ final class AppCoordinator: ObservableObject {
         let configuration = configuration ?? .current
         self.configuration = configuration
         self.environment = configuration.environment
-        self.sessionFactory = sessionFactory ?? PlaceholderWebSessionFactory()
+        self.sessionFactory = sessionFactory ?? DefaultWebSessionFactory()
         self.clearClientState = clearClientState
     }
 
     func openWebView() {
         guard !isTransitioning, webSession == nil else { return }
         webSession = sessionFactory.makeSession(for: environment, endpoints: endpoints)
+        if let activeWebSession = webSession as? WebSession {
+            self.activeWebSession = activeWebSession
+            activeWebSession.load(url: endpoints.web)
+        }
         isWebViewOpen = true
     }
 
@@ -87,6 +79,7 @@ final class AppCoordinator: ObservableObject {
     private func closeCurrentWebSession() {
         webSession?.close()
         webSession = nil
+        activeWebSession = nil
         isWebViewOpen = false
     }
 }

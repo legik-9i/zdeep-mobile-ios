@@ -54,6 +54,11 @@ final class ZDEEPUITests: XCTestCase {
 
         app.buttons["open-webview"].tap()
         XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
+        app.buttons["close-webview"].tap()
+        XCTAssertTrue(app.buttons["open-webview"].waitForExistence(timeout: 2))
+
+        app.buttons["open-webview"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
     }
 
     @MainActor

@@ -1,0 +1,13 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script>
+        document.documentElement.dataset.nativeObject = typeof window.ZdeepNative;
+        document.documentElement.dataset.nativeObjectKeys = String(Object.keys(window.ZdeepNative ?? {}).length);
+    </script>
+</head>
+<body>
+    <iframe srcdoc="&lt;!doctype html&gt;&lt;script&gt;document.documentElement.dataset.nativeObject = typeof window.ZdeepNative;&lt;/script&gt;"></iframe>
+</body>
+</html>
