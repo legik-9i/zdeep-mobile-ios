@@ -135,6 +135,10 @@ class BuildManager:
             raise BuildError(f"Неизвестный набор тестов: {suite}")
         if environment not in {"local", "test"}:
             raise BuildError("Тестовый запуск разрешён только для local или test")
+        if only is not None and suite == "integration":
+            integration_prefix = "ZDEEPTests/WebSessionIntegrationTests/"
+            if not only.startswith(integration_prefix) or len(only) == len(integration_prefix):
+                raise BuildError("--only для integration не принадлежит WebSessionIntegrationTests")
         fingerprint = self.fingerprint(simulator)
         if skip_build:
             artifact = self.cache.get(fingerprint)
@@ -165,11 +169,13 @@ class BuildManager:
             "all": ["ZDEEPTests", "ZDEEPUITests"],
         }[suite]
         if only is not None and suite == "integration":
-            selectors = ["ZDEEPTests"]
+            # xcresult nodeIdentifier is already the complete Xcode selector
+            # for this test target and suite.
+            selectors = [only]
         for target in selectors:
             if suite == "unit":
                 command.append("-skip-testing:ZDEEPTests/WebSessionIntegrationTests")
-            selected_target = target + ("/" + only if only else "")
+            selected_target = target if suite == "integration" and only is not None else target + ("/" + only if only else "")
             command.append(f"-only-testing:{selected_target}")
         self.runner(command, cwd=self.root, check=True)
         self._validate_result_bundle(results / "Tests.xcresult", only)

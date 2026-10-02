@@ -24,9 +24,18 @@ class BuildManagerTests(unittest.TestCase):
         self.runner = Mock(side_effect=self.fake_xcodebuild)
         self.test_report = {
             "testNodes": [{
-                "nodeType": "Test Case",
-                "nodeIdentifier": "ZDEEPTests/example()",
-                "result": "Passed",
+                "nodeType": "Test Plan",
+                "children": [{
+                    "nodeType": "Unit test bundle",
+                    "children": [{
+                        "nodeType": "Test Suite",
+                        "children": [{
+                            "nodeType": "Test Case",
+                            "nodeIdentifier": "ZDEEPTests/example()",
+                            "result": "Passed",
+                        }],
+                    }],
+                }],
             }]
         }
         self.manager = BuildManager(self.root, runner=self.runner, toolchain="Xcode 27")
@@ -130,6 +139,22 @@ class BuildManagerTests(unittest.TestCase):
         })
         with self.assertRaisesRegex(BuildError, "ожидался ровно один выбранный тест"):
             self.manager.run("unit", "local", "SIM-1", only="ZDEEPTests/example()")
+
+    def test_integration_only_rejects_unit_identifier(self):
+        with self.assertRaisesRegex(BuildError, "не принадлежит WebSessionIntegrationTests"):
+            self.manager.run("integration", "local", "SIM-1", only="ZDEEPTests/example()")
+        self.runner.assert_not_called()
+
+    def test_integration_only_constructs_suite_scoped_selector(self):
+        integration_id = "ZDEEPTests/WebSessionIntegrationTests/testWebViewLoads()"
+        self.test_report["testNodes"][0]["children"][0]["children"][0]["children"] = [{
+            "nodeType": "Test Case",
+            "nodeIdentifier": integration_id,
+            "result": "Passed",
+        }]
+        self.manager.run("integration", "test", "SIM-1", only=integration_id)
+        command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+        self.assertIn(f"-only-testing:{integration_id}", command)
 
 
 if __name__ == "__main__":
