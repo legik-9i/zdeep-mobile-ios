@@ -23,14 +23,21 @@ final class ZDEEPUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        // UI tests must launch the application that they test.
+    func testWelcomeScreenOpensClosesAndReopensSession() throws {
         let app = XCUIApplication()
+        app.launchArguments = ["--environment", "local"]
         app.launch()
 
-        // Use XCTAssert and related functions to verify your tests produce the correct results.
-        // XCUIAutomation Documentation
-        // https://developer.apple.com/documentation/xcuiautomation
+        XCTAssertTrue(app.staticTexts["current-environment"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["open-webview"].exists)
+
+        app.buttons["open-webview"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
+        app.buttons["close-webview"].tap()
+        XCTAssertTrue(app.buttons["open-webview"].waitForExistence(timeout: 2))
+
+        app.buttons["open-webview"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
     }
 
     @MainActor
