@@ -41,6 +41,22 @@ final class ZDEEPUITests: XCTestCase {
     }
 
     @MainActor
+    func testTestEnvironmentWelcomeScreenDoesNotLoadWebUntilOpened() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--environment", "test"]
+        app.launch()
+
+        let environment = app.staticTexts["current-environment"]
+        XCTAssertTrue(environment.waitForExistence(timeout: 5))
+        XCTAssertEqual(environment.label, "Окружение: test")
+        XCTAssertTrue(app.buttons["open-webview"].exists)
+        XCTAssertFalse(app.buttons["close-webview"].exists)
+
+        app.buttons["open-webview"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {

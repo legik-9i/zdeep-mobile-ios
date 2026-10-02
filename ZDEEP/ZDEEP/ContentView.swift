@@ -41,6 +41,7 @@ struct ContentView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("environment-picker")
+            .disabled(coordinator.isTransitioning)
 
             if coordinator.isWebViewOpen {
                 Text("WebView будет подключён в следующей задаче")
@@ -48,11 +49,13 @@ struct ContentView: View {
                     coordinator.closeWebView()
                 }
                 .accessibilityIdentifier("close-webview")
+                .disabled(coordinator.isTransitioning)
             } else {
                 Button("Открыть WebView") {
                     coordinator.openWebView()
                 }
                 .accessibilityIdentifier("open-webview")
+                .disabled(coordinator.isTransitioning)
             }
         }
         .padding()

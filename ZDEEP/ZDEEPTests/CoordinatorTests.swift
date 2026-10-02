@@ -50,6 +50,39 @@ struct CoordinatorTests {
         #expect(!coordinator.isWebViewOpen)
     }
 
+    @Test func test_suspended_environment_clear_blocks_open_and_stale_switches() async {
+        let factory = FakeWebSessionFactory()
+        let state = SuspendedClientStateClear()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
+            sessionFactory: factory,
+            clearClientState: { await state.clear() }
+        )
+
+        let transition = Task { await coordinator.switchEnvironment(to: .test) }
+        await state.waitUntilClearStarts()
+
+        coordinator.openWebView()
+        await coordinator.switchEnvironment(to: .prod)
+        await coordinator.resetClientData()
+
+        #expect(coordinator.environment == .local)
+        #expect(coordinator.isTransitioning)
+        #expect(!coordinator.isWebViewOpen)
+        #expect(factory.sessions.isEmpty)
+        let clearCountWhileSuspended = await state.count
+        #expect(clearCountWhileSuspended == 1)
+
+        await state.finishClear()
+        await transition.value
+
+        #expect(coordinator.environment == .test)
+        #expect(!coordinator.isTransitioning)
+        #expect(factory.sessions.isEmpty)
+        let finalClearCount = await state.count
+        #expect(finalClearCount == 1)
+    }
+
     @Test func test_test_prod_switch_preserves_store() async {
         let state = FakeClientState()
         let coordinator = AppCoordinator(
@@ -91,5 +124,34 @@ private final class FakeClientState {
 
     func clear() async {
         clearCount += 1
+    }
+}
+
+private actor SuspendedClientStateClear {
+    private(set) var count = 0
+    private var clearContinuation: CheckedContinuation<Void, Never>?
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func clear() async {
+        count += 1
+        guard count == 1 else { return }
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        await withCheckedContinuation { continuation in
+            clearContinuation = continuation
+        }
+    }
+
+    func waitUntilClearStarts() async {
+        guard count == 0 else { return }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+        }
+    }
+
+    func finishClear() {
+        clearContinuation?.resume()
+        clearContinuation = nil
     }
 }

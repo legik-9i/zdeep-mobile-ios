@@ -30,6 +30,7 @@ private struct PlaceholderWebSessionFactory: WebSessionFactory {
 final class AppCoordinator: ObservableObject {
     @Published private(set) var environment: AppEnvironment
     @Published private(set) var isWebViewOpen = false
+    @Published private(set) var isTransitioning = false
 
     private let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
@@ -53,29 +54,39 @@ final class AppCoordinator: ObservableObject {
     }
 
     func openWebView() {
-        guard webSession == nil else { return }
+        guard !isTransitioning, webSession == nil else { return }
         webSession = sessionFactory.makeSession(for: environment, endpoints: endpoints)
         isWebViewOpen = true
     }
 
     func closeWebView() {
-        webSession?.close()
-        webSession = nil
-        isWebViewOpen = false
+        guard !isTransitioning else { return }
+        closeCurrentWebSession()
     }
 
     func switchEnvironment(to newEnvironment: AppEnvironment) async {
-        guard environment != newEnvironment else { return }
+        guard !isTransitioning, environment != newEnvironment else { return }
         let shouldClearClientState = environment.databaseScope != newEnvironment.databaseScope
-        closeWebView()
-        environment = newEnvironment
+        isTransitioning = true
+        closeCurrentWebSession()
         if shouldClearClientState {
             await clearClientState()
         }
+        environment = newEnvironment
+        isTransitioning = false
     }
 
     func resetClientData() async {
-        closeWebView()
+        guard !isTransitioning else { return }
+        isTransitioning = true
+        closeCurrentWebSession()
         await clearClientState()
+        isTransitioning = false
+    }
+
+    private func closeCurrentWebSession() {
+        webSession?.close()
+        webSession = nil
+        isWebViewOpen = false
     }
 }
