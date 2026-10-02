@@ -16,6 +16,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     @Published private(set) var isClosed = false
 
     private let diagnosticExecutor: DiagnosticExecutor
+    private var navigationCallbacks = NavigationCallbackGate<ObjectIdentifier>()
 
     override init() {
         let contentController = WKUserContentController()
@@ -76,6 +77,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
 
     func load(url: URL) {
         guard !isClosed else { return }
+        navigationCallbacks.clear()
         requestedURL = url
         redirectChain = [url]
         responseStatusCode = nil
@@ -93,24 +95,30 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
             navigationError = "WebKit did not start navigation"
             return
         }
+        navigationCallbacks.replace(with: ObjectIdentifier(navigation!))
     }
 
     func reload() {
         guard !isClosed, requestedURL != nil else { return }
+        navigationCallbacks.clear()
         redirectChain = requestedURL.map { [$0] } ?? []
         responseStatusCode = nil
         navigationError = nil
         isLoading = true
-        guard webView.reload() != nil else {
+        guard let navigation = webView.reload() else {
             isLoading = false
             navigationError = "WebKit did not reload the page"
             return
         }
+        navigationCallbacks.replace(with: ObjectIdentifier(navigation))
     }
 
     func executeJavaScript(_ source: String, timeout: Duration) async throws -> JSONValue {
-        try await waitForNavigation(timeout: timeout)
-        return try await diagnosticExecutor.executeJavaScript(source, timeout: timeout)
+        try await DiagnosticOperation.run(timeout: timeout, waitForNavigation: { deadline in
+            try await self.waitForNavigation(until: deadline)
+        }, execute: { [diagnosticExecutor] deadline in
+            try await diagnosticExecutor.executeJavaScript(source, deadline: deadline)
+        })
     }
 
     func waitForJavaScript(
@@ -118,8 +126,11 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         equals expected: JSONValue,
         timeout: Duration
     ) async throws -> JSONValue {
-        try await waitForNavigation(timeout: timeout)
-        return try await diagnosticExecutor.waitForJavaScript(source, equals: expected, timeout: timeout)
+        try await DiagnosticOperation.run(timeout: timeout, waitForNavigation: { deadline in
+            try await self.waitForNavigation(until: deadline)
+        }, execute: { [diagnosticExecutor] deadline in
+            try await diagnosticExecutor.waitForJavaScript(source, equals: expected, deadline: deadline)
+        })
     }
 
     func close() {
@@ -131,15 +142,14 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         webView.navigationDelegate = nil
     }
 
-    private func waitForNavigation(timeout: Duration) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
+    private func waitForNavigation(until deadline: DiagnosticDeadline) async throws {
         while isLoading {
             guard !isClosed else { throw DiagnosticError.sessionClosed }
-            let remaining = ContinuousClock.now.duration(to: deadline)
-            guard remaining > .zero else { throw DiagnosticError.timedOut(lastValue: nil) }
-            try await Task.sleep(for: min(.milliseconds(20), remaining))
+            try deadline.ensureRemaining()
+            try await Task.sleep(for: min(.milliseconds(20), deadline.remaining))
         }
         guard !isClosed else { throw DiagnosticError.sessionClosed }
+        try deadline.ensureRemaining()
         if let navigationError {
             throw DiagnosticError.navigationFailed(navigationError)
         }
@@ -160,6 +170,40 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     }
 }
 
+struct NavigationCallbackGate<ID: Hashable> {
+    private(set) var current: ID?
+    private var superseded: Set<ID> = []
+
+    mutating func clear() {
+        if let current { superseded.insert(current) }
+        current = nil
+    }
+    mutating func replace(with id: ID) {
+        if let current, current != id { superseded.insert(current) }
+        current = id
+    }
+
+    @discardableResult
+    mutating func beginIfCurrentOrAdopt(_ id: ID, _ callback: () -> Void) -> Bool {
+        if current != id {
+            guard !superseded.contains(id) else { return false }
+            if let current { superseded.insert(current) }
+            current = id
+        }
+        callback()
+        return true
+    }
+
+    @discardableResult
+    func applyIfCurrent(_ id: ID, _ callback: () -> Void) -> Bool {
+        guard current == id else { return false }
+        callback()
+        return true
+    }
+
+    func isCurrent(_ id: ID) -> Bool { current == id }
+}
+
 private struct JavaScriptException: LocalizedError {
     let name: String
     let message: String
@@ -172,16 +216,19 @@ private struct JavaScriptException: LocalizedError {
 
 extension WebSession: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard let navigation, navigationCallbacks.beginIfCurrentOrAdopt(ObjectIdentifier(navigation), {}) else { return }
         diagnosticExecutor.navigationDidStart()
         isLoading = true
         updateCurrentURL(webView.url)
     }
 
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
+        guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
         updateCurrentURL(webView.url)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
         updateCurrentURL(webView.url)
         isLoading = false
         if let responseStatusCode, responseStatusCode >= 400 {
@@ -196,17 +243,19 @@ extension WebSession: WKNavigationDelegate {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
-        if navigationResponse.isForMainFrame {
+        if navigationResponse.isForMainFrame, navigationResponse.response.url == webView.url {
             responseStatusCode = (navigationResponse.response as? HTTPURLResponse)?.statusCode
         }
         decisionHandler(.allow)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
         recordNavigationFailure(error)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
         recordNavigationFailure(error)
     }
 }
