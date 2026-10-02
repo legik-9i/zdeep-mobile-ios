@@ -3,6 +3,7 @@ import WebKit
 
 struct DiagnosticDeadline: Sendable {
     private let instant: ContinuousClock.Instant
+    var expiresAt: ContinuousClock.Instant { instant }
 
     init(timeout: Duration) {
         instant = ContinuousClock.now.advanced(by: max(.zero, timeout))

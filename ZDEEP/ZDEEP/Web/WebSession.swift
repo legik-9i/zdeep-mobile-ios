@@ -17,6 +17,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
 
     private let diagnosticExecutor: DiagnosticExecutor
     private var navigationCallbacks = NavigationCallbackGate<ObjectIdentifier>()
+    private var pendingUserNavigationURL: URL?
 
     override init() {
         let contentController = WKUserContentController()
@@ -77,6 +78,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
 
     func load(url: URL) {
         guard !isClosed else { return }
+        pendingUserNavigationURL = nil
         navigationCallbacks.clear()
         requestedURL = url
         redirectChain = [url]
@@ -100,6 +102,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
 
     func reload() {
         guard !isClosed, requestedURL != nil else { return }
+        pendingUserNavigationURL = nil
         navigationCallbacks.clear()
         redirectChain = requestedURL.map { [$0] } ?? []
         responseStatusCode = nil
@@ -156,9 +159,43 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     }
 
     private func recordNavigationFailure(_ error: Error) {
+        recordNavigationFailure(error.localizedDescription)
+    }
+
+    func recordNavigationFailure(_ message: String) {
         isLoading = false
-        navigationError = error.localizedDescription
+        navigationError = message
         updateCurrentURL(webView.url)
+    }
+
+    @discardableResult
+    func adoptNavigation(_ id: ObjectIdentifier, requestedURL: URL?) -> Bool {
+        let wasCurrent = navigationCallbacks.isCurrent(id)
+        var adopted = false
+        guard navigationCallbacks.beginIfCurrentOrAdopt(id, {
+            guard !wasCurrent else { return }
+            adopted = true
+            let navigationURL = self.pendingUserNavigationURL ?? requestedURL
+            self.requestedURL = navigationURL
+            self.currentURL = navigationURL
+            self.redirectChain = navigationURL.map { [$0] } ?? []
+            self.responseStatusCode = nil
+            self.navigationError = nil
+            self.isLoading = true
+        }) else { return false }
+        return wasCurrent || adopted
+    }
+
+    func prepareForUserLinkNavigation(to url: URL?) {
+        pendingUserNavigationURL = url
+    }
+
+    func recordCurrentNavigationURL(_ url: URL?) {
+        updateCurrentURL(url)
+    }
+
+    func recordResponseStatusCode(_ code: Int?) {
+        responseStatusCode = code
     }
 
     private func updateCurrentURL(_ url: URL?) {
@@ -216,20 +253,34 @@ private struct JavaScriptException: LocalizedError {
 
 extension WebSession: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        guard let navigation, navigationCallbacks.beginIfCurrentOrAdopt(ObjectIdentifier(navigation), {}) else { return }
+        guard let navigation else { return }
+        let id = ObjectIdentifier(navigation)
+        guard adoptNavigation(id, requestedURL: pendingUserNavigationURL ?? webView.url) else { return }
+        pendingUserNavigationURL = nil
         diagnosticExecutor.navigationDidStart()
-        isLoading = true
-        updateCurrentURL(webView.url)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        if navigationAction.targetFrame?.isMainFrame != false {
+            prepareForUserLinkNavigation(to: navigationAction.navigationType == .linkActivated
+                ? navigationAction.request.url
+                : nil)
+        }
+        decisionHandler(.allow)
     }
 
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
         guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
-        updateCurrentURL(webView.url)
+        recordCurrentNavigationURL(webView.url)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
-        updateCurrentURL(webView.url)
+        recordCurrentNavigationURL(webView.url)
         isLoading = false
         if let responseStatusCode, responseStatusCode >= 400 {
             navigationError = "HTTP \(responseStatusCode)"
@@ -244,7 +295,7 @@ extension WebSession: WKNavigationDelegate {
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
         if navigationResponse.isForMainFrame, navigationResponse.response.url == webView.url {
-            responseStatusCode = (navigationResponse.response as? HTTPURLResponse)?.statusCode
+            recordResponseStatusCode((navigationResponse.response as? HTTPURLResponse)?.statusCode)
         }
         decisionHandler(.allow)
     }

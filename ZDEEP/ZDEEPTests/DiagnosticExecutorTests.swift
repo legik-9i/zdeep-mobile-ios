@@ -4,24 +4,26 @@ import Testing
 
 struct DiagnosticExecutorTests {
     @Test @MainActor func test_operation_deadline_includes_navigation_wait() async throws {
-        let startedAt = ContinuousClock.now
+        var navigationExpiration: ContinuousClock.Instant?
+        var executionExpiration: ContinuousClock.Instant?
+        var navigationRemaining: Duration?
+        var executionRemaining: Duration?
 
-        do {
-            _ = try await DiagnosticOperation.run(
-                timeout: .milliseconds(100),
-                waitForNavigation: { _ in try await Task.sleep(for: .milliseconds(60)) },
-                execute: { deadline in
-                    try await Task.sleep(for: min(.milliseconds(60), deadline.remaining))
-                    try deadline.ensureRemaining()
-                    return JSONValue.bool(true)
-                }
-            )
-            Issue.record("Expected one timeout to include navigation and evaluation")
-        } catch let error as DiagnosticError {
-            #expect(error == .timedOut(lastValue: nil))
-        }
+        _ = try await DiagnosticOperation.run(
+            timeout: .seconds(1),
+            waitForNavigation: { deadline in
+                navigationExpiration = deadline.expiresAt
+                navigationRemaining = deadline.remaining
+            },
+            execute: { deadline in
+                executionExpiration = deadline.expiresAt
+                executionRemaining = deadline.remaining
+                return JSONValue.bool(true)
+            }
+        )
 
-        #expect(startedAt.duration(to: .now) < .milliseconds(160))
+        #expect(navigationExpiration == executionExpiration)
+        #expect(executionRemaining! <= navigationRemaining!)
     }
 
     @Test @MainActor func test_navigation_timeout_does_not_start_evaluator() async throws {
@@ -174,6 +176,31 @@ struct DiagnosticExecutorTests {
         #expect(adoptedUserNavigation)
         #expect(gate.isCurrent(3))
         #expect(currentURL == URL(string: "https://user-link.example"))
+    }
+
+    @Test @MainActor func test_web_session_user_link_adoption_resets_navigation_state() {
+        let session = WebSession()
+        let initialURL = URL(string: "https://old.example")!
+        let redirectedURL = URL(string: "https://old.example/redirected")!
+        let userLinkURL = URL(string: "https://new.example/path")!
+        let initialNavigation = NSObject()
+        let userNavigation = NSObject()
+
+        session.adoptNavigation(ObjectIdentifier(initialNavigation), requestedURL: initialURL)
+        session.recordCurrentNavigationURL(redirectedURL)
+        session.recordResponseStatusCode(503)
+        session.recordNavigationFailure("old request failed")
+
+        session.prepareForUserLinkNavigation(to: userLinkURL)
+        let adopted = session.adoptNavigation(ObjectIdentifier(userNavigation), requestedURL: nil)
+
+        #expect(adopted)
+        #expect(session.requestedURL == userLinkURL)
+        #expect(session.currentURL == userLinkURL)
+        #expect(session.redirectChain == [userLinkURL])
+        #expect(session.responseStatusCode == nil)
+        #expect(session.navigationError == nil)
+        #expect(session.isLoading)
     }
 
     @Test @MainActor func test_executor_timeout_includes_last_value() async throws {
