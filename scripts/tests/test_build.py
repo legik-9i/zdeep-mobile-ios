@@ -146,7 +146,7 @@ class BuildManagerTests(unittest.TestCase):
         self.runner.assert_not_called()
 
     def test_integration_only_constructs_suite_scoped_selector(self):
-        integration_id = "ZDEEPTests/WebSessionIntegrationTests/testWebViewLoads()"
+        integration_id = "WebSessionIntegrationTests/test_real_web_url_and_native_object()"
         self.test_report["testNodes"][0]["children"][0]["children"][0]["children"] = [{
             "nodeType": "Test Case",
             "nodeIdentifier": integration_id,
@@ -154,7 +154,23 @@ class BuildManagerTests(unittest.TestCase):
         }]
         self.manager.run("integration", "test", "SIM-1", only=integration_id)
         command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
-        self.assertIn(f"-only-testing:{integration_id}", command)
+        self.assertIn(f"-only-testing:ZDEEPTests/{integration_id}", command)
+
+    def test_integration_only_accepts_target_prefixed_identifier_but_validates_result_id(self):
+        integration_id = "WebSessionIntegrationTests/test_real_web_url_and_native_object()"
+        self.test_report["testNodes"][0]["children"][0]["children"][0]["children"] = [{
+            "nodeType": "Test Case",
+            "nodeIdentifier": integration_id,
+            "result": "Passed",
+        }]
+        self.manager.run("integration", "test", "SIM-1", only=f"ZDEEPTests/{integration_id}")
+        command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+        self.assertIn(f"-only-testing:ZDEEPTests/{integration_id}", command)
+
+    def test_integration_only_rejects_suite_identifier_without_test_name(self):
+        with self.assertRaisesRegex(BuildError, "не принадлежит WebSessionIntegrationTests"):
+            self.manager.run("integration", "test", "SIM-1", only="WebSessionIntegrationTests/")
+        self.runner.assert_not_called()
 
 
 if __name__ == "__main__":

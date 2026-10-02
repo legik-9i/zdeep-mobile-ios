@@ -47,7 +47,7 @@ def parser():
     test = commands.add_parser("test", help="Запустить тесты local или test")
     test.add_argument("--environment", choices=["local", "test"], required=True)
     test.add_argument("--suite", choices=["unit", "integration", "ui", "all"], required=True)
-    test.add_argument("--only", help="Полный nodeIdentifier из xcresult, например ZDEEPTests/example() или MyTests/testExample")
+    test.add_argument("--only", help="nodeIdentifier из xcresult, например WebSessionIntegrationTests/test_example()")
     test.add_argument("--skip-build", action="store_true")
     test.add_argument("--simulator", help="UDID, переопределяет конфигурацию")
     pre = commands.add_parser("preflight", help="Проверить доступность выбранного API")

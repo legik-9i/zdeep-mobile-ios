@@ -135,10 +135,15 @@ class BuildManager:
             raise BuildError(f"Неизвестный набор тестов: {suite}")
         if environment not in {"local", "test"}:
             raise BuildError("Тестовый запуск разрешён только для local или test")
+        result_only = only
+        integration_selector = None
         if only is not None and suite == "integration":
-            integration_prefix = "ZDEEPTests/WebSessionIntegrationTests/"
-            if not only.startswith(integration_prefix) or len(only) == len(integration_prefix):
+            target_prefix = "ZDEEPTests/"
+            result_only = only.removeprefix(target_prefix)
+            integration_prefix = "WebSessionIntegrationTests/"
+            if not result_only.startswith(integration_prefix) or len(result_only) == len(integration_prefix):
                 raise BuildError("--only для integration не принадлежит WebSessionIntegrationTests")
+            integration_selector = f"{target_prefix}{result_only}"
         fingerprint = self.fingerprint(simulator)
         if skip_build:
             artifact = self.cache.get(fingerprint)
@@ -168,15 +173,15 @@ class BuildManager:
             "ui": ["ZDEEPUITests"],
             "all": ["ZDEEPTests", "ZDEEPUITests"],
         }[suite]
-        if only is not None and suite == "integration":
-            # xcresult nodeIdentifier is already the complete Xcode selector
-            # for this test target and suite.
-            selectors = [only]
+        if integration_selector is not None:
+            # Swift Testing's xcresult nodeIdentifier omits the target name;
+            # xcodebuild selectors include it.
+            selectors = [integration_selector]
         for target in selectors:
             if suite == "unit":
                 command.append("-skip-testing:ZDEEPTests/WebSessionIntegrationTests")
-            selected_target = target if suite == "integration" and only is not None else target + ("/" + only if only else "")
+            selected_target = target if integration_selector is not None else target + ("/" + only if only else "")
             command.append(f"-only-testing:{selected_target}")
         self.runner(command, cwd=self.root, check=True)
-        self._validate_result_bundle(results / "Tests.xcresult", only)
+        self._validate_result_bundle(results / "Tests.xcresult", result_only)
         return results
