@@ -2,12 +2,27 @@ import Foundation
 
 struct LaunchConfiguration {
     let environment: AppEnvironment
+    let usbDiagnosticsEnabled: Bool
+    let usbDiagnosticsOpenWebViewEnabled: Bool
     private let localWebOverride: URL?
     private let localBackendOverride: URL?
 
     init(arguments: [String], variables: [String: String]) {
         let selected = Self.value(for: "--environment", in: arguments) ?? variables["ZDEEP_ENVIRONMENT"]
         environment = selected.flatMap(AppEnvironment.init(rawValue:)) ?? .local
+#if DEBUG
+        let requested = arguments.contains("--usb-diagnostics") || variables["ZDEEP_USB_DIAGNOSTICS"] == "1"
+#if targetEnvironment(simulator)
+        usbDiagnosticsEnabled = requested && (environment == .local || environment == .test)
+        usbDiagnosticsOpenWebViewEnabled = usbDiagnosticsEnabled && arguments.contains("--usb-diagnostics-open-webview")
+#else
+        usbDiagnosticsEnabled = requested && environment == .test
+        usbDiagnosticsOpenWebViewEnabled = false
+#endif
+#else
+        usbDiagnosticsEnabled = false
+        usbDiagnosticsOpenWebViewEnabled = false
+#endif
         localWebOverride = Self.validURL(
             Self.value(for: "--web-url", in: arguments) ?? variables["ZDEEP_WEB_URL"]
         )

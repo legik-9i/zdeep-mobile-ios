@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from zdeep_tools.build import BuildError, BuildManager
+from zdeep_tools.diagnostics import DiagnosticError, DiagnosticManager, load_javascript
 from zdeep_tools.preflight import PreflightError, preflight
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +54,28 @@ def parser():
     pre = commands.add_parser("preflight", help="Проверить доступность выбранного API")
     pre.add_argument("--environment", choices=["local", "test"], required=True)
     pre.add_argument("--suite", choices=["unit", "integration", "ui", "all"], default="integration")
+    install = commands.add_parser("device-install", help="Собрать Debug и установить его на iPhone")
+    install.add_argument("--device", help="UDID устройства; по умолчанию берётся из .local/development.json")
+    launch = commands.add_parser("device-launch", help="Запустить Debug в test с USB mailbox")
+    launch.add_argument("--device", help="UDID устройства; по умолчанию берётся из .local/development.json")
+    launch.add_argument("--environment", choices=["test"], default="test")
+    sim_launch = commands.add_parser("simulator-launch", help="Запустить Debug с mailbox на симуляторе")
+    sim_launch.add_argument("--simulator", help="UDID симулятора; по умолчанию берётся из .local/development.json")
+    sim_launch.add_argument("--environment", choices=["local", "test"], default="local")
+    diagnose = commands.add_parser("diagnose", help="Выполнить JavaScript через файловый mailbox")
+    diagnose.add_argument("--target", choices=["simulator", "device"], required=True)
+    diagnose.add_argument("--simulator", help="UDID симулятора")
+    diagnose.add_argument("--device", help="UDID устройства")
+    diagnose.add_argument("--environment", choices=["local", "test"], default="local")
+    js_source = diagnose.add_mutually_exclusive_group(required=True)
+    js_source.add_argument("--js", help="JavaScript как аргумент (может попасть в shell history и список процессов)")
+    js_source.add_argument("--js-file", type=Path, help="Прочитать JavaScript из файла")
+    js_source.add_argument("--js-stdin", action="store_true", help="Прочитать JavaScript из stdin")
+    diagnose.add_argument("--timeout", type=float, default=30, help="Тайм-аут ожидания, до 300 секунд")
+    logs = commands.add_parser("logs", help="Скопировать фильтрованный журнал приложения")
+    logs.add_argument("--target", choices=["simulator", "device"], required=True)
+    logs.add_argument("--simulator", help="UDID симулятора")
+    logs.add_argument("--device", help="UDID устройства")
     return root
 
 
@@ -83,10 +106,58 @@ def main(argv=None):
             }
             results = BuildManager(ROOT).run(args.suite, args.environment, simulator, args.only, args.skip_build, runtime_settings)
             print(f"Результаты: {results}")
+        elif args.command in {"device-install", "device-launch"}:
+            device = args.device or config.get("device")
+            if not device:
+                raise DiagnosticError("Укажите --device или device в .local/development.json")
+            manager = DiagnosticManager(ROOT)
+            if args.command == "device-install":
+                print(f"Установлено: {manager.device_install(device)}")
+            else:
+                manager.device_launch(device, args.environment)
+                print("Приложение запущено в test. Откройте WebView вручную для диагностики.")
+        elif args.command == "simulator-launch":
+            simulator = args.simulator or config.get("simulator")
+            if not simulator:
+                raise DiagnosticError("Укажите --simulator или simulator в .local/development.json")
+            if args.environment == "local":
+                print(preflight("local", "integration", config["api"]["local"]))
+            DiagnosticManager(ROOT).simulator_launch(
+                simulator, args.environment,
+                config["web"][args.environment], config["api"][args.environment]
+            )
+            print(f"Симулятор запущен в {args.environment}; откройте WebView вручную.")
+        elif args.command == "diagnose":
+            javascript = load_javascript(
+                inline=args.js,
+                source_file=args.js_file,
+                source_stream=sys.stdin if args.js_stdin else None,
+            )
+            target_id = (args.simulator or config.get("simulator")) if args.target == "simulator" else (args.device or config.get("device"))
+            if not target_id:
+                raise DiagnosticError(f"Укажите {'--simulator' if args.target == 'simulator' else '--device'} или настройте .local/development.json")
+            if args.target == "device" and args.environment != "test":
+                raise DiagnosticError("Диагностика физического устройства разрешена только в test")
+            if args.target == "simulator" and args.environment == "local":
+                print(preflight("local", "integration", config["api"]["local"]))
+            response = DiagnosticManager(ROOT).diagnose(
+                args.target, target_id, javascript, args.timeout,
+                environment=args.environment,
+                web_url=config["web"][args.environment],
+                api_url=config["api"][args.environment],
+            )
+            print(json.dumps(response, ensure_ascii=False, indent=2))
+            if not response["ok"]:
+                return 1
+        elif args.command == "logs":
+            target_id = (args.simulator or config.get("simulator")) if args.target == "simulator" else (args.device or config.get("device"))
+            if not target_id:
+                raise DiagnosticError(f"Укажите {'--simulator' if args.target == 'simulator' else '--device'} или настройте .local/development.json")
+            print(DiagnosticManager(ROOT).logs(args.target, target_id), end="")
     except subprocess.CalledProcessError as exc:
         print(f"Ошибка: xcodebuild завершился с кодом {exc.returncode}", file=sys.stderr)
         return 1
-    except (BuildError, PreflightError, OSError, json.JSONDecodeError) as exc:
+    except (BuildError, DiagnosticError, PreflightError, OSError, json.JSONDecodeError) as exc:
         print(f"Ошибка: {exc}", file=sys.stderr)
         return 1
     return 0

@@ -31,6 +31,9 @@ final class AppCoordinator: ObservableObject {
     private let eventStore: DiagnosticEventStore
     private var webSession: (any WebSessionHandle)?
     private var webSessionChanges: AnyCancellable?
+#if DEBUG
+    private var diagnosticMailbox: DiagnosticMailbox?
+#endif
 
     var endpoints: EnvironmentEndpoints {
         configuration.endpoints(for: environment)
@@ -49,11 +52,21 @@ final class AppCoordinator: ObservableObject {
         self.clearClientState = clearClientState ?? Self.clearOwnedClientState
         let eventStore = eventStore ?? .shared
         self.eventStore = eventStore
+#if DEBUG
+        if configuration.usbDiagnosticsEnabled {
+            DiagnosticMailbox.removeStaleHandshake()
+        }
+#endif
         eventStore.record(category: "app.started", fields: [
             "environment": configuration.environment.rawValue,
             "webURL": configuration.endpoints(for: configuration.environment).web.absoluteString,
             "backendURL": configuration.endpoints(for: configuration.environment).backend.absoluteString
         ])
+#if DEBUG
+        if configuration.usbDiagnosticsOpenWebViewEnabled {
+            openWebView()
+        }
+#endif
     }
 
     func openWebView() {
@@ -69,6 +82,13 @@ final class AppCoordinator: ObservableObject {
         if let activeWebSession = webSession as? WebSession {
             self.activeWebSession = activeWebSession
             activeWebSession.load(url: endpoints.web)
+#if DEBUG
+            if configuration.usbDiagnosticsEnabled {
+                let mailbox = DiagnosticMailbox(session: activeWebSession, environment: environment, eventStore: eventStore)
+                diagnosticMailbox = mailbox
+                mailbox.start()
+            }
+#endif
         }
         isWebViewOpen = true
         eventStore.record(category: "webview.opened", operationID: webSession?.id.uuidString, fields: ["url": endpoints.web.absoluteString])
@@ -110,6 +130,10 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func closeCurrentWebSession() {
+#if DEBUG
+        diagnosticMailbox?.stop()
+        diagnosticMailbox = nil
+#endif
         webSessionChanges?.cancel()
         webSessionChanges = nil
         webSession?.close()
