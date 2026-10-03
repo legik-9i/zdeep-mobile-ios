@@ -19,7 +19,7 @@ struct DebugOverlay: View {
             .accessibilityIdentifier("debug-button")
             .position(
                 x: min(max(proxy.size.width - 48 + settledOffset.width + dragOffset.width, 48), proxy.size.width - 48),
-                y: min(max(proxy.size.height - 70 + settledOffset.height + dragOffset.height, 32), proxy.size.height - 32)
+                y: min(max(32 + settledOffset.height + dragOffset.height, 32), proxy.size.height - 32)
             )
             .simultaneousGesture(
                 DragGesture(minimumDistance: 8)
@@ -32,6 +32,7 @@ struct DebugOverlay: View {
             )
         }
         .allowsHitTesting(true)
+        .dynamicTypeSize(.xSmall ... .large)
     }
 }
 #endif

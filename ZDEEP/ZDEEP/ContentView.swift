@@ -19,79 +19,39 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 24) {
-            Text("Hello, world3!")
-                .font(.title2)
-
-            Text("Окружение: \(coordinator.environment.rawValue)")
-                .accessibilityIdentifier("current-environment")
-            Text(coordinator.endpoints.web.absoluteString)
-                .font(.footnote)
-                .textSelection(.enabled)
-            Text(coordinator.endpoints.backend.absoluteString)
-                .font(.footnote)
-                .textSelection(.enabled)
-
-#if DEBUG
-            Picker("Окружение", selection: Binding(
-                get: { coordinator.environment },
-                set: { environment in
-                    Task { await coordinator.switchEnvironment(to: environment) }
-                }
-            )) {
-                ForEach(AppEnvironment.allCases) { environment in
-                    Text(environment.rawValue).tag(environment)
-                }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("welcome-environment-picker")
-            .disabled(coordinator.isTransitioning)
-#endif
-
-            if coordinator.isWebViewOpen {
-                if let session = coordinator.activeWebSession {
-                    ZStack(alignment: .top) {
-                        WebViewHost(session: session)
-                        VStack(spacing: 8) {
-                            if session.isLoading {
-                                ProgressView()
-                                    .padding(8)
-                            }
-                            if let url = session.currentURL {
-                                Text(url.absoluteString)
-                                    .font(.caption2)
-                                    .textSelection(.enabled)
-                            }
-                            if let error = session.navigationError {
-                                Text(error)
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
-                                    .accessibilityIdentifier("webview-error")
-                            }
-                            Spacer(minLength: 0)
+        Group {
+            if coordinator.isWebViewOpen, let session = coordinator.activeWebSession {
+                ZStack(alignment: .top) {
+                    WebViewHost(session: session)
+                    VStack(spacing: 8) {
+                        if session.isLoading {
+                            ProgressView()
+                                .padding(8)
                         }
-                        .padding(8)
+                        if let url = session.currentURL {
+                            Text(url.absoluteString)
+                                .font(.caption2)
+                                .textSelection(.enabled)
+                        }
+                        if let error = session.navigationError {
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .accessibilityIdentifier("webview-error")
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(8)
                 }
-                Button("Закрыть WebView") {
-                    coordinator.closeWebView()
-                }
-                .accessibilityIdentifier("close-webview")
-                .disabled(coordinator.isTransitioning)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Button("Открыть WebView") {
-                    coordinator.openWebView()
-                }
-                .accessibilityIdentifier("open-webview")
-                .disabled(coordinator.isTransitioning)
+                WelcomeView()
             }
         }
-        .padding()
 #if DEBUG
-        .overlay(alignment: .bottomTrailing) {
+        .overlay(alignment: .topTrailing) {
             DebugOverlay { isShowingDebugPanel = true }
-                .padding(.bottom, 12)
+                .padding(.top, 8)
                 .padding(.trailing, 8)
         }
         .sheet(isPresented: $isShowingDebugPanel) {

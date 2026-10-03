@@ -28,16 +28,18 @@ final class ZDEEPUITests: XCTestCase {
         app.launchArguments = ["--environment", "local"]
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["current-environment"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["open-webview"].exists)
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Сканировать QR-код"].exists)
+        XCTAssertFalse(app.staticTexts["current-environment"].exists)
+        XCTAssertFalse(app.staticTexts["Hello, world3!"].exists)
 
-        app.buttons["open-webview"].tap()
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
-        app.buttons["close-webview"].tap()
-        XCTAssertTrue(app.buttons["open-webview"].waitForExistence(timeout: 2))
+        DebugPanelTestActions.openWebView(app)
+        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
+        DebugPanelTestActions.closeWebView(app)
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 3))
 
-        app.buttons["open-webview"].tap()
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
+        DebugPanelTestActions.openWebView(app)
+        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
     }
 
     @MainActor
@@ -46,19 +48,49 @@ final class ZDEEPUITests: XCTestCase {
         app.launchArguments = ["--environment", "test"]
         app.launch()
 
-        let environment = app.staticTexts["current-environment"]
-        XCTAssertTrue(environment.waitForExistence(timeout: 5))
-        XCTAssertEqual(environment.label, "Окружение: test")
-        XCTAssertTrue(app.buttons["open-webview"].exists)
+        let welcomeTitle = app.staticTexts["Подключите ваш Zeekr"]
+        XCTAssertTrue(welcomeTitle.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["open-webview"].exists)
         XCTAssertFalse(app.buttons["close-webview"].exists)
+        app.buttons["debug-button"].tap()
+        let webViewState = app.descendants(matching: .any)["webview-state"]
+        XCTAssertTrue(webViewState.waitForExistence(timeout: 3))
+        XCTAssertTrue(webViewState.label.contains("Закрыт"))
+        XCTAssertTrue(app.buttons["test"].isSelected)
+        app.buttons["close-debug-panel"].tap()
 
-        app.buttons["open-webview"].tap()
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
-        app.buttons["close-webview"].tap()
-        XCTAssertTrue(app.buttons["open-webview"].waitForExistence(timeout: 2))
+        DebugPanelTestActions.openWebView(app)
+        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
+        DebugPanelTestActions.closeWebView(app)
+        XCTAssertTrue(welcomeTitle.waitForExistence(timeout: 3))
 
-        app.buttons["open-webview"].tap()
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 2))
+        DebugPanelTestActions.openWebView(app)
+        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    func testAccessibilityTextSizeKeepsWelcomeActionsReachable() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--environment", "local",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
+        app.swipeUp()
+
+        let scanButton = app.buttons["Сканировать QR-код"]
+        let helpButton = app.buttons["Как подключить автомобиль"]
+        XCTAssertTrue(scanButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(helpButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(scanButton.isHittable)
+        XCTAssertTrue(helpButton.isHittable)
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "welcome-accessibility-actions"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     @MainActor

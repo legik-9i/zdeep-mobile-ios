@@ -7,7 +7,13 @@ final class DiagnosticMailboxUITests: XCTestCase {
         app.launchArguments = ["--environment", "local", "--usb-diagnostics"]
         app.launch()
 
-        XCTAssertTrue(app.buttons["open-webview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["current-environment"].exists)
+        app.buttons["debug-button"].tap()
+        let state = app.descendants(matching: .any)["webview-state"]
+        XCTAssertTrue(state.waitForExistence(timeout: 3))
+        XCTAssertTrue(state.label.contains("Закрыт"))
+        XCTAssertTrue(app.buttons["open-webview"].exists)
         XCTAssertFalse(app.buttons["close-webview"].exists)
     }
 
@@ -21,6 +27,10 @@ final class DiagnosticMailboxUITests: XCTestCase {
         ]
         app.launch()
 
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 5))
+        app.buttons["debug-button"].tap()
+        let state = app.descendants(matching: .any)["webview-state"]
+        XCTAssertTrue(state.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(state.label, "Закрыт")
+        XCTAssertTrue(app.buttons["close-webview"].exists)
     }
 }
