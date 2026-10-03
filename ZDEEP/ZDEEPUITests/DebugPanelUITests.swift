@@ -128,4 +128,9 @@ enum DebugPanelTestActions {
         XCTAssertTrue(closeButton.waitForExistence(timeout: 3))
         closeButton.tap()
     }
+
+    static func assertWebViewOpen(_ app: XCUIApplication) {
+        app.buttons["debug-button"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
+    }
 }

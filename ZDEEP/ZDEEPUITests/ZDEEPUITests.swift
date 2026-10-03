@@ -39,7 +39,7 @@ final class ZDEEPUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 3))
 
         DebugPanelTestActions.openWebView(app)
-        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
+        DebugPanelTestActions.assertWebViewOpen(app)
     }
 
     @MainActor
@@ -65,7 +65,7 @@ final class ZDEEPUITests: XCTestCase {
         XCTAssertTrue(welcomeTitle.waitForExistence(timeout: 3))
 
         DebugPanelTestActions.openWebView(app)
-        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
+        DebugPanelTestActions.assertWebViewOpen(app)
     }
 
     @MainActor
