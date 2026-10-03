@@ -31,7 +31,7 @@ class BuildManagerTests(unittest.TestCase):
                         "nodeType": "Test Suite",
                         "children": [{
                             "nodeType": "Test Case",
-                            "nodeIdentifier": "ZDEEPTests/example()",
+                            "nodeIdentifier": "example()",
                             "result": "Passed",
                         }],
                     }],
@@ -120,7 +120,27 @@ class BuildManagerTests(unittest.TestCase):
     def test_only_filter_uses_xcresult_swift_testing_node_identifier(self):
         self.manager.run("unit", "local", "SIM-1", only="ZDEEPTests/example()")
         command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
-        self.assertIn("-only-testing:ZDEEPTests/ZDEEPTests/example()", command)
+        self.assertIn("-only-testing:ZDEEPTests/example()", command)
+
+    def test_unit_only_target_prefixed_swift_testing_identifier(self):
+        case_id = "EnvironmentTests/test_testing_api_path_is_preserved()"
+        self.test_report["testNodes"][0]["children"][0]["children"][0]["children"] = [{
+            "nodeType": "Test Case",
+            "nodeIdentifier": case_id,
+            "result": "Passed",
+        }]
+
+        self.manager.run(
+            "unit", "local", "SIM-1",
+            only=f"ZDEEPTests/{case_id}",
+        )
+
+        command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+        selectors = [arg for arg in command if arg.startswith("-only-testing:")]
+        self.assertEqual(
+            selectors,
+            ["-only-testing:ZDEEPTests/EnvironmentTests/test_testing_api_path_is_preserved()"],
+        )
 
     def test_empty_test_report_is_rejected(self):
         self.test_report = {"testNodes": []}
@@ -134,7 +154,7 @@ class BuildManagerTests(unittest.TestCase):
     def test_only_filter_rejects_extra_executed_cases(self):
         self.test_report["testNodes"].append({
             "nodeType": "Test Case",
-            "nodeIdentifier": "ZDEEPTests/another()",
+            "nodeIdentifier": "another()",
             "result": "Passed",
         })
         with self.assertRaisesRegex(BuildError, "ожидался ровно один выбранный тест"):

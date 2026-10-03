@@ -144,6 +144,8 @@ class BuildManager:
             if not result_only.startswith(integration_prefix) or len(result_only) == len(integration_prefix):
                 raise BuildError("--only для integration не принадлежит WebSessionIntegrationTests")
             integration_selector = f"{target_prefix}{result_only}"
+        elif only is not None and suite == "unit":
+            result_only = only.removeprefix("ZDEEPTests/")
         fingerprint = self.fingerprint(simulator)
         if skip_build:
             artifact = self.cache.get(fingerprint)
@@ -180,7 +182,7 @@ class BuildManager:
         for target in selectors:
             if suite == "unit":
                 command.append("-skip-testing:ZDEEPTests/WebSessionIntegrationTests")
-            selected_target = target if integration_selector is not None else target + ("/" + only if only else "")
+            selected_target = target if integration_selector is not None else target + ("/" + result_only if result_only else "")
             command.append(f"-only-testing:{selected_target}")
         self.runner(command, cwd=self.root, check=True)
         self._validate_result_bundle(results / "Tests.xcresult", result_only)
