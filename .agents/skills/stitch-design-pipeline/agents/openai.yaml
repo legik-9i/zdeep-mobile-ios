@@ -1,4 +1,0 @@
-interface:
-  display_name: "Пайплайн дизайна Stitch"
-  short_description: "Итерации Stitch и проверка HTML экранов"
-  default_prompt: "Используй $stitch-design-pipeline для проектирования нового экрана ZDEEP."
