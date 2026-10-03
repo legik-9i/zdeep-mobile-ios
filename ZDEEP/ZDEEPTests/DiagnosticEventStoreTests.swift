@@ -7,8 +7,10 @@ struct DiagnosticEventStoreTests {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = DiagnosticEventStore(fileURL: directory.appendingPathComponent("events.jsonl"))
         store.record(category: "navigation", operationID: "op-1", fields: [
-            "url": "https://example.test/path?access_token=secret-value&mode=ok",
+            "url": "https://user:password-value@example.test/path?access_token=secret-value&mode=ok#apiKey=fragment-secret&auth=fragment-auth",
             "authorization": "Bearer do-not-store",
+            "apiKey": "api-key-secret",
+            "auth": "auth-field-secret",
             "message": "https://example.test/?token=inline-secret"
         ])
 
@@ -16,6 +18,11 @@ struct DiagnosticEventStoreTests {
         #expect(!exported.contains("secret-value"))
         #expect(!exported.contains("do-not-store"))
         #expect(!exported.contains("inline-secret"))
+        #expect(!exported.contains("password-value"))
+        #expect(!exported.contains("fragment-secret"))
+        #expect(!exported.contains("fragment-auth"))
+        #expect(!exported.contains("api-key-secret"))
+        #expect(!exported.contains("auth-field-secret"))
         #expect(exported.contains("example.test/path"))
         #expect(exported.contains("mode=ok"))
     }
@@ -31,6 +38,22 @@ struct DiagnosticEventStoreTests {
         #expect(try Data(contentsOf: fileURL).count <= 300)
         #expect(store.snapshot().count < 20)
         #expect(store.snapshot().last?.operationID == "op-19")
+    }
+
+    @Test func test_journal_strictly_caps_oversized_category_and_operation_id() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fileURL = directory.appendingPathComponent("events.jsonl")
+        let store = DiagnosticEventStore(fileURL: fileURL, maxBytes: 300)
+
+        store.record(
+            category: String(repeating: "c", count: 10_000),
+            operationID: String(repeating: "o", count: 10_000),
+            fields: ["url": "https://example.test"]
+        )
+
+        #expect(try Data(contentsOf: fileURL).count <= 300)
+        #expect(store.snapshot().last?.operationID?.count ?? 0 <= 120)
+        #expect(store.snapshot().last?.category.count ?? 0 <= 120)
     }
 
     @Test func test_export_writes_snapshot_as_json_lines() throws {

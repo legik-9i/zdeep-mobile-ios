@@ -4,8 +4,11 @@ import SwiftUI
 import WebKit
 
 @MainActor
-protocol WebSessionHandle: AnyObject {
+protocol WebSessionHandle: AnyObject, ObservableObject where ObjectWillChangePublisher == ObservableObjectPublisher {
     var id: UUID { get }
+    var currentURL: URL? { get }
+    var isLoading: Bool { get }
+    var navigationError: String? { get }
     func close()
 }
 
@@ -20,12 +23,14 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var isWebViewOpen = false
     @Published private(set) var isTransitioning = false
     @Published private(set) var activeWebSession: WebSession?
+    @Published private(set) var sessionStateRevision = 0
 
     private let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
     private let clearClientState: () async -> Void
     private let eventStore: DiagnosticEventStore
     private var webSession: (any WebSessionHandle)?
+    private var webSessionChanges: AnyCancellable?
 
     var endpoints: EnvironmentEndpoints {
         configuration.endpoints(for: environment)
@@ -53,7 +58,14 @@ final class AppCoordinator: ObservableObject {
 
     func openWebView() {
         guard !isTransitioning, webSession == nil else { return }
-        webSession = sessionFactory.makeSession(for: environment, endpoints: endpoints)
+        let session = sessionFactory.makeSession(for: environment, endpoints: endpoints)
+        webSession = session
+        let sessionID = session.id.uuidString
+        webSessionChanges = session.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.sessionDidPublishState(sessionID: sessionID)
+            }
+        }
         if let activeWebSession = webSession as? WebSession {
             self.activeWebSession = activeWebSession
             activeWebSession.load(url: endpoints.web)
@@ -98,10 +110,22 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func closeCurrentWebSession() {
+        webSessionChanges?.cancel()
+        webSessionChanges = nil
         webSession?.close()
         webSession = nil
         activeWebSession = nil
         isWebViewOpen = false
+    }
+
+    private func sessionDidPublishState(sessionID: String) {
+        guard let session = webSession, session.id.uuidString == sessionID else { return }
+        sessionStateRevision += 1
+        eventStore.record(category: "webview.state", operationID: sessionID, fields: [
+            "url": session.currentURL?.absoluteString as Any? ?? NSNull(),
+            "isLoading": session.isLoading,
+            "navigationError": session.navigationError as Any? ?? NSNull()
+        ])
     }
 
     private static func clearOwnedClientState() async {

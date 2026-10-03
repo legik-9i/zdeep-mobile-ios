@@ -8,6 +8,7 @@ struct DebugPanel: View {
     @State private var javaScript = "JSON.stringify({ url: location.href, native: typeof window.ZdeepNative })"
     @State private var javaScriptResult = ""
     @State private var isExecuting = false
+    @State private var activeJavaScriptOperationID: String?
 
     var body: some View {
         NavigationStack {
@@ -23,6 +24,7 @@ struct DebugPanel: View {
                     }
                     .pickerStyle(.segmented)
                     .accessibilityIdentifier("environment-picker")
+                    .disabled(!isEnvironmentPickerEnabled)
                     LabeledContent("Web", value: coordinator.endpoints.web.absoluteString)
                         .textSelection(.enabled)
                     LabeledContent("API", value: coordinator.endpoints.backend.absoluteString)
@@ -30,7 +32,9 @@ struct DebugPanel: View {
                 }
 
                 Section("WebView") {
-                    LabeledContent("Состояние", value: webViewState)
+                    LabeledContent("Состояние") {
+                        Text(webViewState).accessibilityIdentifier("webview-state")
+                    }
                     LabeledContent("URL", value: coordinator.activeWebSession?.currentURL?.absoluteString ?? "Не открыт")
                         .textSelection(.enabled)
                     if let error = coordinator.activeWebSession?.navigationError {
@@ -86,7 +90,17 @@ struct DebugPanel: View {
                         .accessibilityIdentifier("close-debug-panel")
                 }
             }
+            .onChange(of: coordinator.activeWebSession?.id) { _, _ in
+                clearJavaScriptResult()
+            }
+            .onDisappear {
+                clearJavaScriptResult()
+            }
         }
+    }
+
+    var isEnvironmentPickerEnabled: Bool {
+        !coordinator.isTransitioning
     }
 
     private var webViewState: String {
@@ -101,25 +115,40 @@ struct DebugPanel: View {
         isExecuting = true
         javaScriptResult = ""
         let operationID = UUID().uuidString
+        activeJavaScriptOperationID = operationID
+        let sessionID = session.id
         eventStore.record(category: "javascript.started", operationID: operationID, fields: ["sessionID": session.id.uuidString])
         Task {
-            defer { isExecuting = false }
             do {
                 let result = try await session.executeJavaScript(javaScript, timeout: .seconds(15))
+                guard activeJavaScriptOperationID == operationID,
+                      coordinator.activeWebSession?.id == sessionID else { return }
                 javaScriptResult = Self.display(result)
                 eventStore.record(category: "javascript.finished", operationID: operationID, fields: ["success": true, "resultSaved": false])
             } catch {
+                guard activeJavaScriptOperationID == operationID,
+                      coordinator.activeWebSession?.id == sessionID else { return }
                 javaScriptResult = error.localizedDescription
                 eventStore.record(category: "javascript.failed", operationID: operationID, fields: ["success": false, "resultSaved": false])
+            }
+            if activeJavaScriptOperationID == operationID {
+                activeJavaScriptOperationID = nil
+                isExecuting = false
             }
         }
     }
 
+    private func clearJavaScriptResult() {
+        javaScriptResult = ""
+        isExecuting = false
+        activeJavaScriptOperationID = nil
+    }
+
     private static func display(_ value: JSONValue) -> String {
-        guard let data = try? JSONEncoder().encode(value),
-              let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
-              let formatted = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-              let string = String(data: formatted, encoding: .utf8) else {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(value),
+              let string = String(data: data, encoding: .utf8) else {
             return String(describing: value)
         }
         return string

@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Testing
 @testable import ZDEEP
 
@@ -62,6 +63,9 @@ struct CoordinatorTests {
         let transition = Task { await coordinator.switchEnvironment(to: .test) }
         await state.waitUntilClearStarts()
 
+        let panel = DebugPanel(coordinator: coordinator, eventStore: DiagnosticEventStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+        #expect(!panel.isEnvironmentPickerEnabled)
+
         coordinator.openWebView()
         await coordinator.switchEnvironment(to: .prod)
         await coordinator.resetClientData()
@@ -78,6 +82,7 @@ struct CoordinatorTests {
 
         #expect(coordinator.environment == .test)
         #expect(!coordinator.isTransitioning)
+        #expect(panel.isEnvironmentPickerEnabled)
         #expect(factory.sessions.isEmpty)
         let finalClearCount = await state.count
         #expect(finalClearCount == 1)
@@ -95,6 +100,30 @@ struct CoordinatorTests {
         #expect(state.clearCount == 0)
         #expect(coordinator.environment == .prod)
     }
+
+    @Test func test_session_published_state_updates_coordinator_and_journal() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = DiagnosticEventStore(fileURL: directory.appendingPathComponent("events.jsonl"))
+        let factory = FakeWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory,
+            eventStore: store
+        )
+        coordinator.openWebView()
+        let session = try #require(factory.sessions.first)
+        let url = URL(string: "https://example.test/path?apiKey=private-value")!
+
+        session.publishState(url: url, isLoading: false, navigationError: "failed")
+        try await Task.sleep(for: .milliseconds(50))
+
+        let stateEvent = try #require(store.snapshot().last)
+        #expect(stateEvent.category == "webview.state")
+        #expect(stateEvent.fields["url"] == .string("https://example.test/path?apiKey=%5BREDACTED%5D"))
+        #expect(stateEvent.fields["isLoading"] == .bool(false))
+        #expect(stateEvent.fields["navigationError"] == .string("failed"))
+    }
+
 }
 
 @MainActor
@@ -109,9 +138,18 @@ private final class FakeWebSessionFactory: WebSessionFactory {
 }
 
 @MainActor
-private final class FakeWebSession: WebSessionHandle {
+private final class FakeWebSession: WebSessionHandle, ObservableObject {
     let id = UUID()
+    @Published private(set) var currentURL: URL?
+    @Published private(set) var isLoading = false
+    @Published private(set) var navigationError: String?
     private(set) var closeCount = 0
+
+    func publishState(url: URL?, isLoading: Bool, navigationError: String?) {
+        currentURL = url
+        self.isLoading = isLoading
+        self.navigationError = navigationError
+    }
 
     func close() {
         closeCount += 1

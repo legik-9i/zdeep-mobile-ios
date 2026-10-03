@@ -44,7 +44,7 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.segmented)
-            .accessibilityIdentifier("environment-picker")
+            .accessibilityIdentifier("welcome-environment-picker")
             .disabled(coordinator.isTransitioning)
 #endif
 

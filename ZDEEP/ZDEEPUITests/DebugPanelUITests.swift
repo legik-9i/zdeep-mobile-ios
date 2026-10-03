@@ -9,6 +9,7 @@ final class DebugPanelUITests: XCTestCase {
 
         let debugButton = app.buttons["debug-button"]
         XCTAssertTrue(debugButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["welcome-environment-picker"].exists)
         debugButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["environment-picker"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["reset-client-data"].exists)
@@ -42,6 +43,9 @@ final class DebugPanelUITests: XCTestCase {
 
         debugButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["webview-error"].waitForExistence(timeout: 15))
+        let state = app.descendants(matching: .any)["webview-state"]
+        let showsErrorState = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "Ошибка"), object: state)
+        XCTAssertEqual(XCTWaiter.wait(for: [showsErrorState], timeout: 5), .completed)
         XCTAssertTrue(app.buttons["reset-client-data"].waitForExistence(timeout: 3))
         app.buttons["close-debug-panel"].tap()
         app.buttons["close-webview"].tap()
@@ -57,5 +61,54 @@ final class DebugPanelUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["Результаты JS показываются только здесь и автоматически не сохраняются."].exists)
         XCTAssertTrue(app.staticTexts["Результат появится здесь"].exists)
+    }
+
+    @MainActor
+    func test_js_result_clears_after_active_session_is_reset() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--environment", "local"]
+        app.launch()
+        app.buttons["open-webview"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
+        app.buttons["debug-button"].tap()
+
+        let result = app.descendants(matching: .any)["js-result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 3))
+        app.buttons["execute-js"].tap()
+        let hasResult = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label != %@", "Результат появится здесь"),
+            object: result
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [hasResult], timeout: 15), .completed)
+
+        app.buttons["reset-client-data"].tap()
+        let hasPlaceholder = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Результат появится здесь"),
+            object: result
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [hasPlaceholder], timeout: 5), .completed)
+    }
+
+    @MainActor
+    func test_top_level_string_js_result_renders_without_crashing() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--environment", "local"]
+        app.launch()
+        app.buttons["open-webview"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
+        app.buttons["debug-button"].tap()
+
+        let result = app.descendants(matching: .any)["js-result"]
+        XCTAssertTrue(result.waitForExistence(timeout: 3))
+        app.buttons["execute-js"].tap()
+        let showsStringResult = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label != %@", "Результат появится здесь"),
+            object: result
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [showsStringResult], timeout: 15), .completed)
+        XCTAssertTrue(app.exists)
+
+        app.buttons["close-debug-panel"].tap()
+        app.buttons["close-webview"].tap()
     }
 }

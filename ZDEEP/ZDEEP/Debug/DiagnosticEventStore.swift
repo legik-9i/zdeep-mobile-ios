@@ -35,7 +35,7 @@ final class DiagnosticEventStore: @unchecked Sendable {
             let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             self.fileURL = support.appendingPathComponent("ZDEEP/diagnostic-events.jsonl")
         }
-        self.maxBytes = max(128, maxBytes)
+        self.maxBytes = max(1, maxBytes)
     }
 
     func record(category: String, operationID: String? = nil, fields: [String: Any] = [:]) {
@@ -54,14 +54,37 @@ final class DiagnosticEventStore: @unchecked Sendable {
             events.removeFirst()
             data = encodeLines(events)
         }
-        if data.count > maxBytes, let last = events.last {
-            events[events.count - 1] = DiagnosticEvent(
-                timestamp: last.timestamp,
-                category: last.category,
-                operationID: last.operationID,
+        if data.count > maxBytes, let original = events.last {
+            var compacted = DiagnosticEvent(
+                timestamp: original.timestamp,
+                category: original.category,
+                operationID: original.operationID,
                 fields: ["truncated": .bool(true)]
             )
-            data = encodeLines(events)
+            while true {
+                events[events.count - 1] = compacted
+                data = encodeLines(events)
+                guard data.count > maxBytes else { break }
+
+                let categoryCount = compacted.category.count
+                let operationIDCount = compacted.operationID?.count ?? 0
+                guard categoryCount > 1 || operationIDCount > 1 else {
+                    events.removeLast()
+                    data = encodeLines(events)
+                    break
+                }
+
+                let category = categoryCount > 1 ? String(compacted.category.prefix(max(1, categoryCount / 2))) : compacted.category
+                let operationID = operationIDCount > 1
+                    ? String(compacted.operationID!.prefix(max(1, operationIDCount / 2)))
+                    : compacted.operationID
+                compacted = DiagnosticEvent(
+                    timestamp: compacted.timestamp,
+                    category: category,
+                    operationID: operationID,
+                    fields: compacted.fields
+                )
+            }
         }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: .atomic)
@@ -137,15 +160,44 @@ final class DiagnosticEventStore: @unchecked Sendable {
     }
 
     nonisolated private static func sanitizeURL(_ value: String) -> String {
-        guard var components = URLComponents(string: value), let queryItems = components.queryItems else { return value }
-        components.queryItems = queryItems.map { item in
-            isSensitiveKey(item.name) ? URLQueryItem(name: item.name, value: "[REDACTED]") : item
+        guard var components = URLComponents(string: value) else { return value }
+        if components.user != nil { components.user = "[REDACTED]" }
+        if components.password != nil { components.password = "[REDACTED]" }
+        components.queryItems = sanitizeQueryItems(components.queryItems)
+        if let fragment = components.fragment {
+            components.fragment = sanitizeFragment(fragment)
         }
         return components.string ?? value
     }
 
+    nonisolated private static func sanitizeFragment(_ fragment: String) -> String {
+        let queryStart: String.Index
+        let prefix: String
+        if let questionMark = fragment.firstIndex(of: "?") {
+            prefix = String(fragment[...questionMark])
+            queryStart = fragment.index(after: questionMark)
+        } else if fragment.contains("=") {
+            prefix = ""
+            queryStart = fragment.startIndex
+        } else {
+            return fragment
+        }
+
+        let query = String(fragment[queryStart...])
+        guard var components = URLComponents(string: "https://fragment.invalid/?\(query)") else { return fragment }
+        components.queryItems = sanitizeQueryItems(components.queryItems)
+        let sanitizedQuery = components.percentEncodedQuery ?? query
+        return prefix + sanitizedQuery
+    }
+
+    nonisolated private static func sanitizeQueryItems(_ items: [URLQueryItem]?) -> [URLQueryItem]? {
+        items?.map { item in
+            isSensitiveKey(item.name) ? URLQueryItem(name: item.name, value: "[REDACTED]") : item
+        }
+    }
+
     nonisolated private static func isSensitiveKey(_ key: String) -> Bool {
         let key = key.lowercased().filter(\.isLetter)
-        return ["token", "secret", "password", "authorization", "privatekey", "cookie", "certificate", "jwt", "credential", "qr"].contains(where: key.contains)
+        return ["token", "secret", "password", "authorization", "auth", "apikey", "privatekey", "cookie", "certificate", "jwt", "credential", "qr"].contains(where: key.contains)
     }
 }
