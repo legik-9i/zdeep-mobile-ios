@@ -17,10 +17,14 @@ struct LaunchConfiguration {
     }
 
     static var current: LaunchConfiguration {
+#if DEBUG
         LaunchConfiguration(
             arguments: ProcessInfo.processInfo.arguments,
             variables: ProcessInfo.processInfo.environment
         )
+#else
+        LaunchConfiguration(arguments: ["--environment", AppEnvironment.prod.rawValue], variables: [:])
+#endif
     }
 
     func endpoints(for environment: AppEnvironment) -> EnvironmentEndpoints {

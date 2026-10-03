@@ -1,4 +1,6 @@
 import Foundation
+
+#if DEBUG
 import WebKit
 
 struct DiagnosticDeadline: Sendable {
@@ -273,3 +275,4 @@ final class DiagnosticExecutor {
         guard generation == pageGeneration else { throw DiagnosticError.pageChanged }
     }
 }
+#endif

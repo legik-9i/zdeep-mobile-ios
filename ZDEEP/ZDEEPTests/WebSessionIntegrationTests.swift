@@ -114,6 +114,44 @@ struct WebSessionIntegrationTests {
         }
     }
 
+    @Test func test_full_reset_clears_web_cookie_and_local_storage() async throws {
+        let coordinator = AppCoordinator(configuration: LaunchConfiguration(
+            arguments: ["--environment", environment.rawValue],
+            variables: [:]
+        ))
+        coordinator.openWebView()
+        let initialSession = try #require(coordinator.activeWebSession)
+        _ = try await initialSession.waitForJavaScript(
+            "document.readyState",
+            equals: .string("complete"),
+            timeout: .seconds(60)
+        )
+        _ = try await initialSession.executeJavaScript(
+            "localStorage.setItem('__zdeep_reset_probe', 'present'); document.cookie = '__zdeep_reset_cookie=present; path=/'; true",
+            timeout: .seconds(10)
+        )
+        let seeded = try await initialSession.executeJavaScript(
+            "localStorage.getItem('__zdeep_reset_probe') === 'present' && document.cookie.includes('__zdeep_reset_cookie=present')",
+            timeout: .seconds(10)
+        )
+        #expect(seeded == .bool(true))
+
+        await coordinator.resetClientData()
+        coordinator.openWebView()
+        let resetSession = try #require(coordinator.activeWebSession)
+        defer { coordinator.closeWebView() }
+        _ = try await resetSession.waitForJavaScript(
+            "document.readyState",
+            equals: .string("complete"),
+            timeout: .seconds(60)
+        )
+        let remains = try await resetSession.executeJavaScript(
+            "localStorage.getItem('__zdeep_reset_probe') !== null || document.cookie.includes('__zdeep_reset_cookie=present')",
+            timeout: .seconds(10)
+        )
+        #expect(remains == .bool(false))
+    }
+
     private func makeLoadedSession() async throws -> WebSession {
         let session = WebSession()
         session.load(url: environment.endpoints.web)

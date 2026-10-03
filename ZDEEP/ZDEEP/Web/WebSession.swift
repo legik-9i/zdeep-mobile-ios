@@ -15,7 +15,9 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     @Published private(set) var navigationError: String?
     @Published private(set) var isClosed = false
 
+#if DEBUG
     private let diagnosticExecutor: DiagnosticExecutor
+#endif
     private var navigationCallbacks = NavigationCallbackGate<ObjectIdentifier>()
     private var pendingUserNavigationURL: URL?
 
@@ -32,6 +34,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         configuration.userContentController = contentController
         webView = WKWebView(frame: .zero, configuration: configuration)
 
+#if DEBUG
         let webView = self.webView
         diagnosticExecutor = DiagnosticExecutor { source, completion in
             Task { @MainActor in
@@ -72,6 +75,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
                 }
             }
         }
+#endif
         super.init()
         webView.navigationDelegate = self
     }
@@ -116,6 +120,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         navigationCallbacks.replace(with: ObjectIdentifier(navigation))
     }
 
+#if DEBUG
     func executeJavaScript(_ source: String, timeout: Duration) async throws -> JSONValue {
         try await DiagnosticOperation.run(timeout: timeout, waitForNavigation: { deadline in
             try await self.waitForNavigation(until: deadline)
@@ -135,16 +140,20 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
             try await diagnosticExecutor.waitForJavaScript(source, equals: expected, deadline: deadline)
         })
     }
+#endif
 
     func close() {
         guard !isClosed else { return }
         isClosed = true
         isLoading = false
+#if DEBUG
         diagnosticExecutor.close()
+#endif
         webView.stopLoading()
         webView.navigationDelegate = nil
     }
 
+#if DEBUG
     private func waitForNavigation(until deadline: DiagnosticDeadline) async throws {
         while isLoading {
             guard !isClosed else { throw DiagnosticError.sessionClosed }
@@ -157,6 +166,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
             throw DiagnosticError.navigationFailed(navigationError)
         }
     }
+#endif
 
     private func recordNavigationFailure(_ error: Error) {
         recordNavigationFailure(error.localizedDescription)
@@ -257,7 +267,9 @@ extension WebSession: WKNavigationDelegate {
         let id = ObjectIdentifier(navigation)
         guard adoptNavigation(id, requestedURL: pendingUserNavigationURL ?? webView.url) else { return }
         pendingUserNavigationURL = nil
+#if DEBUG
         diagnosticExecutor.navigationDidStart()
+#endif
     }
 
     func webView(

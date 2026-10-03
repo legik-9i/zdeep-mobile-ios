@@ -10,6 +10,9 @@ import SwiftUI
 @MainActor
 struct ContentView: View {
     @ObservedObject var coordinator: AppCoordinator
+#if DEBUG
+    @State private var isShowingDebugPanel = false
+#endif
 
     init(coordinator: AppCoordinator) {
         self.coordinator = coordinator
@@ -29,6 +32,7 @@ struct ContentView: View {
                 .font(.footnote)
                 .textSelection(.enabled)
 
+#if DEBUG
             Picker("Окружение", selection: Binding(
                 get: { coordinator.environment },
                 set: { environment in
@@ -42,6 +46,7 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .accessibilityIdentifier("environment-picker")
             .disabled(coordinator.isTransitioning)
+#endif
 
             if coordinator.isWebViewOpen {
                 if let session = coordinator.activeWebSession {
@@ -61,6 +66,7 @@ struct ContentView: View {
                                 Text(error)
                                     .font(.caption)
                                     .foregroundStyle(.red)
+                                    .accessibilityIdentifier("webview-error")
                             }
                             Spacer(minLength: 0)
                         }
@@ -82,6 +88,24 @@ struct ContentView: View {
             }
         }
         .padding()
+#if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            DebugOverlay { isShowingDebugPanel = true }
+                .padding(.bottom, 12)
+                .padding(.trailing, 8)
+        }
+        .sheet(isPresented: $isShowingDebugPanel) {
+            DebugPanel(coordinator: coordinator, eventStore: .shared)
+        }
+        .onChange(of: coordinator.activeWebSession?.currentURL) { _, url in
+            guard let url else { return }
+            DiagnosticEventStore.shared.record(category: "webview.navigation", operationID: coordinator.activeWebSession?.id.uuidString, fields: ["url": url.absoluteString])
+        }
+        .onChange(of: coordinator.activeWebSession?.navigationError) { _, error in
+            guard let error else { return }
+            DiagnosticEventStore.shared.record(category: "webview.navigation.failed", operationID: coordinator.activeWebSession?.id.uuidString, fields: ["error": error])
+        }
+#endif
     }
 }
 

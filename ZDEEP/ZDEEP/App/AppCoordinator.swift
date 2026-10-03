@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import WebKit
 
 @MainActor
 protocol WebSessionHandle: AnyObject {
@@ -23,6 +24,7 @@ final class AppCoordinator: ObservableObject {
     private let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
     private let clearClientState: () async -> Void
+    private let eventStore: DiagnosticEventStore
     private var webSession: (any WebSessionHandle)?
 
     var endpoints: EnvironmentEndpoints {
@@ -32,13 +34,21 @@ final class AppCoordinator: ObservableObject {
     init(
         configuration: LaunchConfiguration? = nil,
         sessionFactory: (any WebSessionFactory)? = nil,
-        clearClientState: @escaping () async -> Void = {}
+        clearClientState: (() async -> Void)? = nil,
+        eventStore: DiagnosticEventStore? = nil
     ) {
         let configuration = configuration ?? .current
         self.configuration = configuration
         self.environment = configuration.environment
         self.sessionFactory = sessionFactory ?? DefaultWebSessionFactory()
-        self.clearClientState = clearClientState
+        self.clearClientState = clearClientState ?? Self.clearOwnedClientState
+        let eventStore = eventStore ?? .shared
+        self.eventStore = eventStore
+        eventStore.record(category: "app.started", fields: [
+            "environment": configuration.environment.rawValue,
+            "webURL": configuration.endpoints(for: configuration.environment).web.absoluteString,
+            "backendURL": configuration.endpoints(for: configuration.environment).backend.absoluteString
+        ])
     }
 
     func openWebView() {
@@ -49,16 +59,20 @@ final class AppCoordinator: ObservableObject {
             activeWebSession.load(url: endpoints.web)
         }
         isWebViewOpen = true
+        eventStore.record(category: "webview.opened", operationID: webSession?.id.uuidString, fields: ["url": endpoints.web.absoluteString])
     }
 
     func closeWebView() {
         guard !isTransitioning else { return }
+        let operationID = webSession?.id.uuidString
         closeCurrentWebSession()
+        eventStore.record(category: "webview.closed", operationID: operationID)
     }
 
     func switchEnvironment(to newEnvironment: AppEnvironment) async {
         guard !isTransitioning, environment != newEnvironment else { return }
         let shouldClearClientState = environment.databaseScope != newEnvironment.databaseScope
+        let previousEnvironment = environment
         isTransitioning = true
         closeCurrentWebSession()
         if shouldClearClientState {
@@ -66,14 +80,21 @@ final class AppCoordinator: ObservableObject {
         }
         environment = newEnvironment
         isTransitioning = false
+        eventStore.record(category: "environment.changed", fields: [
+            "from": previousEnvironment.rawValue,
+            "to": newEnvironment.rawValue,
+            "clientDataCleared": shouldClearClientState
+        ])
     }
 
     func resetClientData() async {
         guard !isTransitioning else { return }
         isTransitioning = true
+        eventStore.record(category: "clientData.reset.started")
         closeCurrentWebSession()
         await clearClientState()
         isTransitioning = false
+        eventStore.record(category: "clientData.reset.finished")
     }
 
     private func closeCurrentWebSession() {
@@ -81,5 +102,19 @@ final class AppCoordinator: ObservableObject {
         webSession = nil
         activeWebSession = nil
         isWebViewOpen = false
+    }
+
+    private static func clearOwnedClientState() async {
+        await withCheckedContinuation { continuation in
+            WKWebsiteDataStore.default().removeData(
+                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                modifiedSince: .distantPast
+            ) {
+                continuation.resume()
+            }
+        }
+        if let bundleIdentifier = Bundle.main.bundleIdentifier {
+            UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
+        }
     }
 }
