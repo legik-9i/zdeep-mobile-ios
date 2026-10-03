@@ -130,6 +130,8 @@ enum DebugPanelTestActions {
     }
 
     static func assertWebViewOpen(_ app: XCUIApplication) {
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Подключите ваш Zeekr"].exists)
         app.buttons["debug-button"].tap()
         XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
     }
