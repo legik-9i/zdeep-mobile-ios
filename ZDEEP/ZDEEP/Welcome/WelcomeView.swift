@@ -7,13 +7,20 @@ struct WelcomeView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(spacing: 0) {
-                    welcomeContent
+                    header
 
-                    Spacer(minLength: 0)
+                    heroImage
+                        .padding(.top, 16)
 
-                    actions
+                    Spacer(minLength: 32)
+
+                    bottomContent
                 }
-                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: max(0, geometry.size.height - WelcomeStyle.pageBottomInset),
+                    alignment: .top
+                )
                 .padding(.horizontal, WelcomeStyle.pageHorizontalInset)
                 .padding(.bottom, WelcomeStyle.pageBottomInset)
             }
@@ -23,29 +30,29 @@ struct WelcomeView: View {
         .background(WelcomeStyle.background.ignoresSafeArea())
     }
 
-    private var welcomeContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Image("WelcomeBolt")
-                    .resizable()
-                    .renderingMode(.template)
-                    .foregroundStyle(WelcomeStyle.text)
-                    .frame(width: 20, height: 20)
-                    .accessibilityHidden(true)
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image("WelcomeBolt")
+                .resizable()
+                .renderingMode(.template)
+                .foregroundStyle(WelcomeStyle.text)
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
 
-                Text("ZDEEP")
-                    .font(WelcomeStyle.font(.bold, size: 20, relativeTo: .headline))
-                    .tracking(-1)
-                    .foregroundStyle(WelcomeStyle.text)
-            }
-            .padding(.top, 16)
-            .padding(.bottom, 8)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("ZDEEP")
+            Text("ZDEEP")
+                .font(WelcomeStyle.font(.bold, size: 20, relativeTo: .headline))
+                .tracking(-1)
+                .foregroundStyle(WelcomeStyle.text)
+        }
+        .padding(.top, 16)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("ZDEEP")
+    }
 
-            heroImage
-                .padding(.top, 16)
-
+    private var bottomContent: some View {
+        VStack(alignment: .leading, spacing: WelcomeStyle.sectionGap) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Подключите ваш Zeekr")
                     .font(WelcomeStyle.font(.bold, size: 30, relativeTo: .largeTitle))
@@ -61,7 +68,8 @@ struct WelcomeView: View {
                     .padding(.top, 12)
             }
             .padding(.horizontal, 4)
-            .padding(.top, 32)
+
+            actions
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -91,8 +99,8 @@ struct WelcomeView: View {
                     Text("Сканировать QR-код")
                         .font(WelcomeStyle.font(.semibold, size: 16, relativeTo: .body))
                         .tracking(-0.4)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(WelcomeStyle.white)
                 .padding(.vertical, WelcomeStyle.buttonVerticalPadding)
@@ -119,8 +127,8 @@ struct WelcomeView: View {
                     Text("Как подключить автомобиль")
                         .font(WelcomeStyle.font(.medium, size: 16, relativeTo: .body))
                         .tracking(-0.4)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(WelcomeStyle.text)
                 .padding(.vertical, WelcomeStyle.buttonVerticalPadding)
@@ -136,7 +144,6 @@ struct WelcomeView: View {
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, WelcomeStyle.sectionGap)
         .accessibilityIdentifier("welcomeActions")
     }
 }

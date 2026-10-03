@@ -1,0 +1,13 @@
+{
+  "family": "Material Symbols Outlined",
+  "package": "material-symbols",
+  "packageVersion": "0.47.1",
+  "glyph": "help_outline",
+  "resolvedGlyph": "help",
+  "axes": {
+    "opsz": 24,
+    "wght": 400,
+    "FILL": 0,
+    "GRAD": 0
+  }
+}
