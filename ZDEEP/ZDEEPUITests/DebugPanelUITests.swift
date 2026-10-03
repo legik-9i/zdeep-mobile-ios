@@ -9,22 +9,24 @@ final class DebugPanelUITests: XCTestCase {
 
         let debugButton = app.buttons["debug-button"]
         XCTAssertTrue(debugButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["welcome-environment-picker"].exists)
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].exists)
+        XCTAssertFalse(app.staticTexts["current-environment"].exists)
         debugButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["environment-picker"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["reset-client-data"].exists)
-        app.buttons["close-debug-panel"].tap()
-
+        XCTAssertTrue(app.buttons["open-webview"].exists)
+        XCTAssertFalse(app.buttons["close-webview"].exists)
         app.buttons["open-webview"].tap()
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
+
+        XCTAssertTrue(debugButton.waitForExistence(timeout: 3))
         XCTAssertTrue(debugButton.exists)
         debugButton.tap()
         XCTAssertTrue(app.buttons["reload-webview"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any)["js-input"].exists)
-        app.buttons["close-debug-panel"].tap()
-
+        XCTAssertTrue(app.buttons["close-webview"].exists)
         app.buttons["close-webview"].tap()
-        XCTAssertTrue(app.buttons["open-webview"].waitForExistence(timeout: 3))
+
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 3))
         XCTAssertTrue(debugButton.exists)
     }
 
@@ -33,7 +35,7 @@ final class DebugPanelUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--environment", "local", "--web-url", "http://127.0.0.1:1"]
         app.launch()
-        app.buttons["open-webview"].tap()
+        DebugPanelTestActions.openWebView(app)
 
         let debugButton = app.buttons["debug-button"]
         XCTAssertTrue(debugButton.waitForExistence(timeout: 3))
@@ -48,7 +50,7 @@ final class DebugPanelUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [showsErrorState], timeout: 5), .completed)
         XCTAssertTrue(app.buttons["reset-client-data"].waitForExistence(timeout: 3))
         app.buttons["close-debug-panel"].tap()
-        app.buttons["close-webview"].tap()
+        DebugPanelTestActions.closeWebView(app)
         XCTAssertTrue(debugButton.exists)
     }
 
@@ -58,6 +60,7 @@ final class DebugPanelUITests: XCTestCase {
         app.launchArguments = ["--environment", "local"]
         app.launch()
         app.buttons["debug-button"].tap()
+        app.swipeUp()
 
         XCTAssertTrue(app.staticTexts["Результаты JS показываются только здесь и автоматически не сохраняются."].exists)
         XCTAssertTrue(app.staticTexts["Результат появится здесь"].exists)
@@ -68,8 +71,7 @@ final class DebugPanelUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--environment", "local"]
         app.launch()
-        app.buttons["open-webview"].tap()
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
+        DebugPanelTestActions.openWebView(app)
         app.buttons["debug-button"].tap()
 
         let result = app.descendants(matching: .any)["js-result"]
@@ -94,8 +96,7 @@ final class DebugPanelUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--environment", "local"]
         app.launch()
-        app.buttons["open-webview"].tap()
-        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
+        DebugPanelTestActions.openWebView(app)
         app.buttons["debug-button"].tap()
 
         let result = app.descendants(matching: .any)["js-result"]
@@ -109,6 +110,29 @@ final class DebugPanelUITests: XCTestCase {
         XCTAssertTrue(app.exists)
 
         app.buttons["close-debug-panel"].tap()
-        app.buttons["close-webview"].tap()
+        DebugPanelTestActions.closeWebView(app)
+    }
+}
+
+enum DebugPanelTestActions {
+    static func openWebView(_ app: XCUIApplication) {
+        app.buttons["debug-button"].tap()
+        let openButton = app.buttons["open-webview"]
+        XCTAssertTrue(openButton.waitForExistence(timeout: 3))
+        openButton.tap()
+    }
+
+    static func closeWebView(_ app: XCUIApplication) {
+        app.buttons["debug-button"].tap()
+        let closeButton = app.buttons["close-webview"]
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 3))
+        closeButton.tap()
+    }
+
+    static func assertWebViewOpen(_ app: XCUIApplication) {
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Подключите ваш Zeekr"].exists)
+        app.buttons["debug-button"].tap()
+        XCTAssertTrue(app.buttons["close-webview"].waitForExistence(timeout: 3))
     }
 }

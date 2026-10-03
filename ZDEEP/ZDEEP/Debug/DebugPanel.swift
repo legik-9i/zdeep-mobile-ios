@@ -37,6 +37,21 @@ struct DebugPanel: View {
                     }
                     LabeledContent("URL", value: coordinator.activeWebSession?.currentURL?.absoluteString ?? "Не открыт")
                         .textSelection(.enabled)
+                    if coordinator.isWebViewOpen {
+                        Button("Закрыть WebView") {
+                            coordinator.closeWebView()
+                            dismiss()
+                        }
+                        .accessibilityIdentifier("close-webview")
+                        .disabled(coordinator.isTransitioning)
+                    } else {
+                        Button("Открыть WebView") {
+                            coordinator.openWebView()
+                            dismiss()
+                        }
+                        .accessibilityIdentifier("open-webview")
+                        .disabled(coordinator.isTransitioning)
+                    }
                     if let error = coordinator.activeWebSession?.navigationError {
                         Text(error).foregroundStyle(.red)
                             .accessibilityIdentifier("webview-error")
