@@ -32,3 +32,8 @@
 # Общие правила
 1. Документация пишется на русском языке. 
 2. Актуальную техническую документацию следует искать через MCP Context7.
+
+# Навыки проекта
+- При запуске, выборе, повторе и разборе iOS-тестов используй `.agents/skills/ios-testing/SKILL.md`.
+- При сборе логов или выполнении JavaScript в WebView симулятора/iPhone используй `.agents/skills/ios-debugging/SKILL.md` и следуй ограничениям контуров.
+- При реализации native SwiftUI по Stitch сначала используй `.agents/skills/ios-stitch-implementation/SKILL.md`, который требует применить `.agents/skills/stitch-design-pipeline/SKILL.md` для получения актуального экрана и HTML.
