@@ -65,6 +65,6 @@ nonisolated final class KeychainBindingRecordStorage: KeychainRecordStorage, @un
     }
 }
 
-nonisolated private enum KeychainStorageError: Error {
+nonisolated enum KeychainStorageError: Error {
     case status(OSStatus)
 }

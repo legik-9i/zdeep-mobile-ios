@@ -64,6 +64,30 @@ class BuildManagerTests(unittest.TestCase):
         self.assertEqual(len(build_calls), 1)
         self.assertEqual(len(test_calls), 1)
 
+    def test_ad_hoc_signing_is_limited_to_local_unit_simulator_builds(self):
+        self.manager.run("unit", "local", "SIM-1")
+        local_unit = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=YES", local_unit)
+        self.assertIn("CODE_SIGN_IDENTITY=-", local_unit)
+
+        self.runner.reset_mock()
+        self.manager.run("unit", "test", "SIM-1")
+        test_unit = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", test_unit)
+        self.assertNotIn("CODE_SIGN_IDENTITY=-", test_unit)
+
+        self.runner.reset_mock()
+        self.manager.run("all", "local", "SIM-1")
+        local_all = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", local_all)
+        self.assertNotIn("CODE_SIGN_IDENTITY=-", local_all)
+
+        self.runner.reset_mock()
+        self.manager.build("SIM-1")
+        direct_build = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", direct_build)
+        self.assertNotIn("CODE_SIGN_IDENTITY=-", direct_build)
+
     def test_skip_build_rejects_changed_sources(self):
         self.manager.run("unit", "local", "SIM-1")
         (self.root / "ZDEEP" / "source.swift").write_text("let value = 2")

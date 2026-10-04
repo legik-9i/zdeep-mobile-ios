@@ -30,7 +30,7 @@ class BuildManager:
         except (OSError, subprocess.CalledProcessError) as exc:
             raise BuildError(f"Не удалось получить версию Xcode: {exc}") from exc
 
-    def fingerprint(self, simulator: str) -> str:
+    def fingerprint(self, simulator: str, code_signing: bool = False) -> str:
         digest = hashlib.sha256()
         included = (self.root / "ZDEEP", self.root / "scripts")
         for base in included:
@@ -43,7 +43,14 @@ class BuildManager:
             for path in paths:
                 digest.update(path.relative_to(self.root).as_posix().encode())
                 digest.update(path.read_bytes())
-        digest.update(json.dumps({"toolchain": self.toolchain, "simulator": simulator, "scheme": "ZDEEP", "configuration": "Debug", "sdk": "iphonesimulator"}, sort_keys=True).encode())
+        digest.update(json.dumps({
+            "toolchain": self.toolchain,
+            "simulator": simulator,
+            "scheme": "ZDEEP",
+            "configuration": "Debug",
+            "sdk": "iphonesimulator",
+            "codeSigning": code_signing,
+        }, sort_keys=True).encode())
         return digest.hexdigest()
 
     def new_results_directory(self) -> Path:
@@ -52,12 +59,16 @@ class BuildManager:
         path.mkdir()
         return path
 
-    def build(self, simulator: str) -> Path:
-        fingerprint = self.fingerprint(simulator)
+    def build(self, simulator: str, code_signing: bool = False) -> Path:
+        fingerprint = self.fingerprint(simulator, code_signing=code_signing)
         destination = self.builds / fingerprint
         derived = destination / "DerivedData"
         destination.mkdir(parents=True, exist_ok=True)
-        command = ["xcodebuild", "build-for-testing", "-project", str(self.root / "ZDEEP/ZDEEP.xcodeproj"), "-scheme", "ZDEEP", "-destination", f"platform=iOS Simulator,id={simulator}", "-derivedDataPath", str(derived), "CODE_SIGNING_ALLOWED=NO"]
+        command = ["xcodebuild", "build-for-testing", "-project", str(self.root / "ZDEEP/ZDEEP.xcodeproj"), "-scheme", "ZDEEP", "-destination", f"platform=iOS Simulator,id={simulator}", "-derivedDataPath", str(derived)]
+        if code_signing:
+            command.extend(["CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-"])
+        else:
+            command.append("CODE_SIGNING_ALLOWED=NO")
         self.runner(command, cwd=self.root, check=True)
         xctestruns = sorted(
             path for path in (derived / "Build/Products").glob("*.xctestrun")
@@ -65,7 +76,12 @@ class BuildManager:
         )
         if not xctestruns:
             raise BuildError("xcodebuild завершился без .xctestrun")
-        metadata = {"fingerprint": fingerprint, "xctestrun": str(xctestruns[-1].relative_to(self.root)), "simulator": simulator}
+        metadata = {
+            "fingerprint": fingerprint,
+            "xctestrun": str(xctestruns[-1].relative_to(self.root)),
+            "simulator": simulator,
+            "codeSigning": code_signing,
+        }
         (destination / "build.json").write_text(json.dumps(metadata, indent=2))
         self.cache[fingerprint] = xctestruns[-1]
         return xctestruns[-1]
@@ -146,7 +162,8 @@ class BuildManager:
             integration_selector = f"{target_prefix}{result_only}"
         elif only is not None and suite == "unit":
             result_only = only.removeprefix("ZDEEPTests/")
-        fingerprint = self.fingerprint(simulator)
+        code_signing = suite == "unit" and environment == "local"
+        fingerprint = self.fingerprint(simulator, code_signing=code_signing)
         if skip_build:
             artifact = self.cache.get(fingerprint)
             if artifact is None:
@@ -160,7 +177,7 @@ class BuildManager:
             if artifact is None:
                 raise BuildError("Нет актуальной сборки для этих исходников; выполните build-tests")
         else:
-            artifact = self.build(simulator)
+            artifact = self.build(simulator, code_signing=code_signing)
 
         results = self.new_results_directory()
         # Xcode resolves __TESTROOT__ and related markers relative to the

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 nonisolated struct PendingBinding: Equatable, Sendable {
     let bindingId: UUID
@@ -20,9 +21,10 @@ nonisolated protocol BindingStoring: Sendable {
 }
 
 nonisolated enum BindingStoreError: Error, Equatable {
-    case restoreRequired
-    case invalidTransition
+    case keychain(operation: String, status: OSStatus)
     case invalidRecord
-    case storageFailure
-    case installMarkerFailure
+    case cryptography
+    case installMarker(operation: String)
+    case staleBinding
+    case registrationNotAllowed
 }

@@ -34,25 +34,27 @@ nonisolated final class BindingStore: BindingStoring, @unchecked Sendable {
 
     func restore() async throws -> RegisteredBinding? {
         try await enqueue {
+            self.currentRecord = nil
+            self.hasRestored = false
+
             let markerExists: Bool
             do {
                 markerExists = try self.markerStorage.exists()
             } catch {
-                throw BindingStoreError.installMarkerFailure
+                throw BindingStoreError.installMarker(operation: "exists")
             }
 
             if !markerExists {
                 do {
                     try self.recordStorage.delete()
                 } catch {
-                    throw BindingStoreError.storageFailure
+                    throw self.keychainFailure(operation: "delete", error: error)
                 }
                 do {
                     try self.markerStorage.create()
                 } catch {
-                    throw BindingStoreError.installMarkerFailure
+                    throw BindingStoreError.installMarker(operation: "create")
                 }
-                self.currentRecord = nil
                 self.hasRestored = true
                 return nil
             }
@@ -61,42 +63,50 @@ nonisolated final class BindingStore: BindingStoring, @unchecked Sendable {
             do {
                 data = try self.recordStorage.read()
             } catch {
-                throw BindingStoreError.storageFailure
+                throw self.keychainFailure(operation: "read", error: error)
             }
             guard let data else {
-                self.currentRecord = nil
                 self.hasRestored = true
                 return nil
             }
 
-            guard let record = try? JSONDecoder().decode(PersistedBindingRecord.self, from: data),
-                  record.state == .registered,
-                  let carId = record.carId, !carId.isEmpty,
-                  (try? self.makePrivateKey(for: record)) != nil else {
-                do {
-                    try self.recordStorage.delete()
-                } catch {
-                    throw BindingStoreError.storageFailure
-                }
-                self.currentRecord = nil
+            let record: PersistedBindingRecord
+            do {
+                record = try JSONDecoder().decode(PersistedBindingRecord.self, from: data)
+            } catch {
+                throw BindingStoreError.invalidRecord
+            }
+            _ = try self.makePrivateKey(for: record)
+
+            switch record.state {
+            case .pending:
+                guard record.carId == nil else { throw BindingStoreError.invalidRecord }
+                try self.deleteRestoredIncompleteRecord()
                 self.hasRestored = true
                 return nil
+            case .resetting:
+                guard record.carId?.isEmpty != true else { throw BindingStoreError.invalidRecord }
+                try self.deleteRestoredIncompleteRecord()
+                self.hasRestored = true
+                return nil
+            case .registered:
+                guard let carId = record.carId, !carId.isEmpty else { throw BindingStoreError.invalidRecord }
+                self.currentRecord = record
+                self.hasRestored = true
+                return RegisteredBinding(
+                    bindingId: record.bindingId,
+                    publicCertificate: record.publicCertificate,
+                    carId: carId
+                )
             }
-
-            self.currentRecord = record
-            self.hasRestored = true
-            return RegisteredBinding(
-                bindingId: record.bindingId,
-                publicCertificate: record.publicCertificate,
-                carId: carId
-            )
         }
     }
 
     func beginRegistration() async throws -> PendingBinding {
         try await enqueue {
-            guard self.hasRestored else { throw BindingStoreError.restoreRequired }
-            guard self.currentRecord == nil else { throw BindingStoreError.invalidTransition }
+            guard self.hasRestored, self.currentRecord == nil else {
+                throw BindingStoreError.registrationNotAllowed
+            }
             let privateKey = P256.Signing.PrivateKey()
             let record = PersistedBindingRecord(
                 bindingId: UUID(),
@@ -113,30 +123,31 @@ nonisolated final class BindingStore: BindingStoring, @unchecked Sendable {
 
     func sign(bindingId: UUID, bytes: Data) async throws -> Data {
         try await enqueue {
-            guard let record = self.currentRecord,
-                  record.bindingId == bindingId,
-                  record.state == .pending || record.state == .registered else {
-                throw BindingStoreError.invalidTransition
+            guard let record = self.currentRecord, record.bindingId == bindingId else {
+                throw BindingStoreError.staleBinding
             }
+            guard record.state == .pending || record.state == .registered else {
+                throw BindingStoreError.registrationNotAllowed
+            }
+            let privateKey = try self.makePrivateKey(for: record)
             do {
-                return try self.makePrivateKey(for: record).signature(for: bytes).derRepresentation
-            } catch let error as BindingStoreError {
-                throw error
+                return try privateKey.signature(for: bytes).derRepresentation
             } catch {
-                throw BindingStoreError.invalidRecord
+                throw BindingStoreError.cryptography
             }
         }
     }
 
     func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding {
         try await enqueue {
-            guard !carId.isEmpty, let record = self.currentRecord, record.bindingId == bindingId else {
-                throw BindingStoreError.invalidTransition
+            guard let record = self.currentRecord, record.bindingId == bindingId else {
+                throw BindingStoreError.staleBinding
             }
+            guard !carId.isEmpty else { throw BindingStoreError.registrationNotAllowed }
             if record.state == .registered, record.carId == carId {
                 return RegisteredBinding(bindingId: bindingId, publicCertificate: record.publicCertificate, carId: carId)
             }
-            guard record.state == .pending else { throw BindingStoreError.invalidTransition }
+            guard record.state == .pending else { throw BindingStoreError.registrationNotAllowed }
 
             var registeredRecord = record
             registeredRecord.state = .registered
@@ -149,7 +160,6 @@ nonisolated final class BindingStore: BindingStoring, @unchecked Sendable {
 
     func reset() async throws {
         try await enqueue {
-            guard self.hasRestored else { throw BindingStoreError.restoreRequired }
             var resettingRecord: PersistedBindingRecord?
             var markSucceeded = true
             if var record = self.currentRecord {
@@ -171,17 +181,39 @@ nonisolated final class BindingStore: BindingStoring, @unchecked Sendable {
                 if markSucceeded, let resettingRecord {
                     self.currentRecord = resettingRecord
                 }
-                throw BindingStoreError.storageFailure
+                throw self.keychainFailure(operation: "delete", error: error)
             }
         }
     }
 
     private func persist(_ record: PersistedBindingRecord) throws {
+        let data: Data
         do {
-            try recordStorage.write(JSONEncoder().encode(record))
+            data = try JSONEncoder().encode(record)
         } catch {
-            throw BindingStoreError.storageFailure
+            throw BindingStoreError.invalidRecord
         }
+        do {
+            try recordStorage.write(data)
+        } catch {
+            throw keychainFailure(operation: "write", error: error)
+        }
+    }
+
+    private func deleteRestoredIncompleteRecord() throws {
+        do {
+            try recordStorage.delete()
+        } catch {
+            throw keychainFailure(operation: "delete", error: error)
+        }
+    }
+
+    private func keychainFailure(operation: String, error: Error) -> BindingStoreError {
+        if let storageError = error as? KeychainStorageError,
+           case let .status(status) = storageError {
+            return .keychain(operation: operation, status: status)
+        }
+        return .keychain(operation: operation, status: errSecIO)
     }
 
     private func makePrivateKey(for record: PersistedBindingRecord) throws -> P256.Signing.PrivateKey {

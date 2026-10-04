@@ -1,4 +1,5 @@
 import Foundation
+import Security
 @testable import ZDEEP
 
 enum BindingStoreTestError: Error, Equatable {
@@ -32,7 +33,7 @@ nonisolated final class MemoryKeychainRecordStorage: KeychainRecordStorage, @unc
     private let lock = NSLock()
     private let operationLog: BindingStoreOperationLog?
     private var storedData: Data?
-    private var failures: [String: Int] = [:]
+    private var failures: [String: (count: Int, status: OSStatus)] = [:]
     private var blockedWrite: (entered: DispatchSemaphore, release: DispatchSemaphore)?
     private var observedWrite: (entered: DispatchSemaphore, release: DispatchSemaphore)?
     private(set) var operations: [String] = []
@@ -42,10 +43,10 @@ nonisolated final class MemoryKeychainRecordStorage: KeychainRecordStorage, @unc
         self.operationLog = operationLog
     }
 
-    func failNext(_ operation: String, count: Int = 1) {
+    func failNext(_ operation: String, count: Int = 1, status: OSStatus = errSecIO) {
         lock.lock()
         defer { lock.unlock() }
-        failures[operation] = count
+        failures[operation] = (count, status)
     }
 
     func currentData() -> Data? {
@@ -75,7 +76,7 @@ nonisolated final class MemoryKeychainRecordStorage: KeychainRecordStorage, @unc
     }
 
     func waitUntilWriteIsBlocked() async -> Bool {
-        let entered = enteredWriteSemaphore()
+        let entered = observedWriteSemaphore()
         guard let entered else { return false }
         return await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
@@ -84,10 +85,10 @@ nonisolated final class MemoryKeychainRecordStorage: KeychainRecordStorage, @unc
         }
     }
 
-    private func enteredWriteSemaphore() -> DispatchSemaphore? {
+    private func observedWriteSemaphore() -> DispatchSemaphore? {
         lock.lock()
         defer { lock.unlock() }
-        return blockedWrite?.entered
+        return observedWrite?.entered
     }
 
     func resumeBlockedWrite() {
@@ -129,9 +130,9 @@ nonisolated final class MemoryKeychainRecordStorage: KeychainRecordStorage, @unc
         defer { lock.unlock() }
         operations.append(operation)
         operationLog?.append(operation)
-        if let remaining = failures[operation], remaining > 0 {
-            failures[operation] = remaining - 1
-            throw BindingStoreTestError.injected
+        if let failure = failures[operation], failure.count > 0 {
+            failures[operation] = (failure.count - 1, failure.status)
+            throw KeychainStorageError.status(failure.status)
         }
     }
 }
