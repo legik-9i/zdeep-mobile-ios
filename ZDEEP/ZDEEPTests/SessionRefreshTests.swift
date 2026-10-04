@@ -228,6 +228,105 @@ struct SessionRefreshTests {
         #expect(client.tokenCalls == 2)
     }
 
+    @Test func test_cancelled_update_preserves_scheduled_retry_deadline() async throws {
+        let (store, pending) = try await LocalAuthFixture.makePendingBinding()
+        let clock = TestSessionClock()
+        let client = SessionRefreshAuthClient()
+        client.enqueuePair(.success(session(deadline: .seconds(10_000))))
+        client.enqueueToken(.failure(authFailure()))
+        client.enqueueToken(.success(session(token: "jwt-2", deadline: .seconds(20_000))))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: clock)
+        _ = try await manager.register(binding: pending, carToken: "car-token")
+        manager.webViewDidBecomeVisible()
+        await expectAuthFailure(Task { try await manager.updateSession(binding: nil) })
+        await waitUntilIdle(manager)
+
+        let cancelled = Task { try await manager.updateSession(binding: nil) }
+        cancelled.cancel()
+        do { _ = try await cancelled.value; Issue.record("Expected cancellation") }
+        catch is CancellationError {}
+        catch { Issue.record("Expected CancellationError, got \(error)") }
+
+        clock.advance(by: .seconds(4))
+        await Task.yield()
+        #expect(client.tokenCalls == 1)
+        clock.advance(by: .seconds(1))
+        await waitForTokenCalls(2, client: client)
+        await waitUntilIdle(manager)
+        #expect(client.tokenCalls == 2)
+    }
+
+    @Test func test_cancelled_register_preserves_scheduled_retry_deadline() async throws {
+        let (store, pending) = try await LocalAuthFixture.makePendingBinding()
+        let clock = TestSessionClock()
+        let client = SessionRefreshAuthClient()
+        client.enqueuePair(.success(session(deadline: .seconds(10_000))))
+        client.enqueueToken(.failure(authFailure()))
+        client.enqueueToken(.success(session(token: "jwt-2", deadline: .seconds(20_000))))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: clock)
+        _ = try await manager.register(binding: pending, carToken: "car-token")
+        manager.webViewDidBecomeVisible()
+        await expectAuthFailure(Task { try await manager.updateSession(binding: nil) })
+        await waitUntilIdle(manager)
+
+        let cancelled = Task { try await manager.register(binding: pending, carToken: "car-token") }
+        cancelled.cancel()
+        do { _ = try await cancelled.value; Issue.record("Expected cancellation") }
+        catch is CancellationError {}
+        catch { Issue.record("Expected CancellationError, got \(error)") }
+
+        clock.advance(by: .seconds(4))
+        await Task.yield()
+        #expect(client.tokenCalls == 1)
+        clock.advance(by: .seconds(1))
+        await waitForTokenCalls(2, client: client)
+        await waitUntilIdle(manager)
+        #expect(client.tokenCalls == 2)
+        #expect(client.pairCalls == 1)
+    }
+
+    @Test func test_foreground_starts_retry_immediately_with_120_seconds_or_less_remaining() async throws {
+        let (store, pending) = try await LocalAuthFixture.makePendingBinding()
+        let clock = TestSessionClock()
+        let client = SessionRefreshAuthClient()
+        client.enqueuePair(.success(session(deadline: .seconds(900))))
+        client.enqueueToken(.failure(authFailure()))
+        client.enqueueToken(.success(session(token: "jwt-2", deadline: .seconds(2_000))))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: clock)
+        _ = try await manager.register(binding: pending, carToken: "car-token")
+        manager.webViewDidBecomeVisible()
+        client.beforeNextToken = { clock.advance(by: .seconds(781)) }
+        await expectAuthFailure(Task { try await manager.updateSession(binding: nil) })
+        await waitUntilIdle(manager)
+        manager.setActive(false)
+
+        manager.setActive(true)
+        await waitForTokenCalls(2, client: client)
+        await waitUntilIdle(manager)
+        #expect(client.tokenCalls == 2)
+    }
+
+    @Test func test_foreground_starts_retry_immediately_after_session_expiry() async throws {
+        let (store, pending) = try await LocalAuthFixture.makePendingBinding()
+        let clock = TestSessionClock()
+        let client = SessionRefreshAuthClient()
+        client.enqueuePair(.success(session(deadline: .seconds(900))))
+        client.enqueueToken(.failure(authFailure()))
+        client.enqueueToken(.success(session(token: "jwt-2", deadline: .seconds(2_000))))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: clock)
+        _ = try await manager.register(binding: pending, carToken: "car-token")
+        manager.webViewDidBecomeVisible()
+        client.beforeNextToken = { clock.advance(by: .seconds(901)) }
+        await expectAuthFailure(Task { try await manager.updateSession(binding: nil) })
+        await waitUntilIdle(manager)
+        manager.setActive(false)
+
+        manager.setActive(true)
+        await waitForTokenCalls(2, client: client)
+        await waitUntilIdle(manager)
+        #expect(client.tokenCalls == 2)
+    }
+
     @Test func test_background_preserves_absolute_refresh_deadline_and_starts_nothing() async throws {
         let (store, pending) = try await LocalAuthFixture.makePendingBinding()
         let clock = TestSessionClock()
@@ -375,6 +474,7 @@ private final class SessionRefreshAuthClient: AuthClientProtocol {
     private var tokenResults: [Result<AuthSession, Error>] = []
     private var tokenContinuation: CheckedContinuation<AuthSession, Error>?
     private var shouldSuspendToken: Bool
+    var beforeNextToken: (() -> Void)?
     private(set) var pairCalls = 0
     private(set) var tokenCalls = 0
     private(set) var invalidateCalls = 0
@@ -392,6 +492,9 @@ private final class SessionRefreshAuthClient: AuthClientProtocol {
 
     func token(binding: RegisteredBinding) async throws -> AuthSession {
         tokenCalls += 1
+        let action = beforeNextToken
+        beforeNextToken = nil
+        action?()
         if shouldSuspendToken {
             shouldSuspendToken = false
             return try await withCheckedThrowingContinuation { tokenContinuation = $0 }

@@ -124,6 +124,7 @@ final class SessionManager: SessionManaging {
         guard active || operation != nil else {
             throw RegistrationFailure(failure: inactiveFailure(stage: .pair), registeredBinding: storedRegisteredBinding)
         }
+        try Task.checkCancellation()
         prepareUserInitiatedAttempt()
         return try await request(.register(binding, carToken))
     }
@@ -151,6 +152,7 @@ final class SessionManager: SessionManaging {
         guard let effectiveBinding = storedRegisteredBinding ?? binding else {
             throw unavailableFailure(attemptId: UUID())
         }
+        try Task.checkCancellation()
         prepareUserInitiatedAttempt()
         storedRegisteredBinding = effectiveBinding
         return try await request(.update(effectiveBinding))
@@ -552,11 +554,18 @@ final class SessionManager: SessionManaging {
             scheduleExpiry(for: session)
         }
         guard !(mode == .entry && entryAutoRefreshBlocked), operation == nil else { return }
+        guard storedRegisteredBinding != nil else { return }
+
+        let needsImmediateRefresh = session.map { $0.deadline - clock.now <= .seconds(120) } ?? true
+        if needsImmediateRefresh {
+            cancelAuthPlan()
+            beginScheduledUpdate()
+            return
+        }
         if authPlan != nil {
             activateAuthPlanIfPossible()
             return
         }
-        guard storedRegisteredBinding != nil else { return }
         let refreshDeadline = session.map(SessionRefreshPolicy.refreshDeadline(for:)) ?? clock.now
         if refreshDeadline <= clock.now {
             beginScheduledUpdate()

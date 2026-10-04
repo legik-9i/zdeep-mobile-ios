@@ -17,3 +17,14 @@
 - Local integration не запускалась: Task 4 требует unit verification, а интеграционные контуры не входят в этот scope.
 
 Тесты покрывают срок обновления для pair и последующей публикации, короткий TTL и отсутствие параллельных обновлений, entry error latch, working backoff, retry после expiry, сброс счётчика при успехе, общую ошибку joined consumers, замену retry ручным вызовом, background/foreground и завершение уже начатой операции в background.
+
+## Fix round — Sol review findings
+
+Добавлена проверка `Task.checkCancellation()` перед изменением расписания и регистрационной привязки в ручных `register`/`updateSession`. Foreground теперь сохраняет запланированный retry и счётчик ошибок, пока действующий JWT имеет больше 120 секунд остатка; при остатке ≤120 секунд или отсутствии действующего JWT в разрешённом режиме отменяет отложенный callback и начинает одну попытку сразу.
+
+### TDD и проверки
+
+- RED на Simulator: каждый из четырёх новых тестов падал ожидаемо — после отмены или foreground до retry deadline число token-вызовов оставалось 1 вместо ожидаемых 2.
+- GREEN focused: четыре теста (`test_cancelled_update_preserves_scheduled_retry_deadline`, `test_cancelled_register_preserves_scheduled_retry_deadline`, `test_foreground_starts_retry_immediately_with_120_seconds_or_less_remaining`, `test_foreground_starts_retry_immediately_after_session_expiry`) — по отдельности PASS на iPhone 18 Pro Simulator, environment local.
+- Полный unit: `python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — 104/104 passed, 14 suites; xcresult `.artifacts/runs/20261004-170624-1791122784010512000/Tests.xcresult`.
+- `git diff --check` — passed.
