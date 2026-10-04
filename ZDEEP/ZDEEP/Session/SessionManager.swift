@@ -1,0 +1,437 @@
+import Foundation
+
+nonisolated enum SessionManagerEvent {
+    case sessionChanged(AuthSession)
+    case sessionExpired(AuthFailure?)
+    case entryFailed(AuthFailure)
+    case authorizationActivityChanged(Bool)
+}
+
+nonisolated struct RegistrationFailure: Error {
+    let failure: AuthFailure
+    let registeredBinding: RegisteredBinding?
+}
+
+@MainActor
+protocol SessionManaging: AnyObject {
+    var currentSession: AuthSession? { get }
+    var lastError: AuthFailure? { get }
+    var registeredBinding: RegisteredBinding? { get }
+    var isAuthorizationInFlight: Bool { get }
+    func register(binding: PendingBinding, carToken: String) async throws -> AuthSession
+    func updateSession(binding: RegisteredBinding?) async throws -> AuthSession
+    func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle
+    func webViewDidBecomeVisible()
+    func setActive(_ active: Bool)
+    func stop()
+}
+
+@MainActor
+final class SessionManager: SessionManaging {
+    private enum Mode {
+        case entry
+        case working
+    }
+
+    private enum Request {
+        case register(PendingBinding, String)
+        case update(RegisteredBinding)
+
+        var bindingId: UUID {
+            switch self {
+            case .register(let binding, _): binding.bindingId
+            case .update(let binding): binding.bindingId
+            }
+        }
+    }
+
+    private final class Operation {
+        let id: UUID
+        let request: Request
+        var waiters: [UUID: CheckedContinuation<AuthSession, Error>] = [:]
+        var task: Task<Void, Never>?
+
+        init(id: UUID, request: Request) {
+            self.id = id
+            self.request = request
+        }
+    }
+
+    private struct Subscriber {
+        let id: UUID
+        let callback: @MainActor (SessionManagerEvent) -> Void
+    }
+
+    private let bindingStore: any BindingStoring
+    private let authClient: any AuthClientProtocol
+    private let clock: any SessionClock
+    private var operation: Operation?
+    private var subscribers: [Subscriber] = []
+    private var eventToken = UUID()
+    private var mode: Mode = .entry
+    private var active = true
+    private var storedRegisteredBinding: RegisteredBinding?
+    private var publishedSession: AuthSession?
+    private var lastExpiredAttemptId: UUID?
+    private var storedLastError: AuthFailure?
+
+    init(bindingStore: any BindingStoring, authClient: any AuthClientProtocol, clock: any SessionClock) {
+        self.bindingStore = bindingStore
+        self.authClient = authClient
+        self.clock = clock
+    }
+
+    var currentSession: AuthSession? {
+        guard let session = publishedSession else { return nil }
+        guard session.deadline > clock.now else {
+            if lastExpiredAttemptId != session.attemptId {
+                lastExpiredAttemptId = session.attemptId
+                let token = eventToken
+                emit(.sessionExpired(storedLastError), whileTokenIs: token)
+            }
+            return nil
+        }
+        return session
+    }
+
+    var lastError: AuthFailure? { storedLastError }
+    var registeredBinding: RegisteredBinding? { storedRegisteredBinding }
+    var isAuthorizationInFlight: Bool { operation != nil }
+
+    func register(binding: PendingBinding, carToken: String) async throws -> AuthSession {
+        try await request(.register(binding, carToken))
+    }
+
+    func updateSession(binding: RegisteredBinding?) async throws -> AuthSession {
+        if let operation {
+            let requestedBindingId = binding?.bindingId ?? operation.request.bindingId
+            guard operation.request.bindingId == requestedBindingId,
+                  binding == nil || binding?.bindingId == operation.request.bindingId else {
+                throw contextFailure(stage: .token, attemptId: UUID())
+            }
+            return try await waitForExistingOperation(operation.id)
+        }
+
+        if let binding, let current = storedRegisteredBinding, current.bindingId != binding.bindingId {
+            throw contextFailure(stage: .token, attemptId: UUID())
+        }
+        guard let effectiveBinding = storedRegisteredBinding ?? binding else {
+            throw unavailableFailure(attemptId: UUID())
+        }
+        storedRegisteredBinding = effectiveBinding
+        return try await request(.update(effectiveBinding))
+    }
+
+    func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle {
+        let id = UUID()
+        subscribers.append(Subscriber(id: id, callback: observer))
+        return SessionSubscription { [weak self] in
+            self?.subscribers.removeAll { $0.id == id }
+        }
+    }
+
+    func webViewDidBecomeVisible() { mode = .working }
+
+    func setActive(_ active: Bool) { self.active = active }
+
+    func stop() {
+        let previousOperation = operation
+        let wasInFlight = previousOperation != nil
+        eventToken = UUID()
+        operation = nil
+        storedRegisteredBinding = nil
+        publishedSession = nil
+        lastExpiredAttemptId = nil
+        storedLastError = nil
+        mode = .entry
+        active = true
+
+        if let previousOperation {
+            authClient.invalidateCurrentAttempt()
+            previousOperation.task?.cancel()
+            let waiters = Array(previousOperation.waiters.values)
+            previousOperation.waiters.removeAll()
+            for waiter in waiters { waiter.resume(throwing: CancellationError()) }
+        }
+        if wasInFlight {
+            emit(.authorizationActivityChanged(false), whileTokenIs: eventToken)
+        }
+    }
+
+    private func request(_ request: Request) async throws -> AuthSession {
+        let waiterId = UUID()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                joinOrStart(request, waiterId: waiterId, continuation: continuation)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.removeWaiter(waiterId) }
+        }
+    }
+
+    private func waitForExistingOperation(_ operationId: UUID) async throws -> AuthSession {
+        let waiterId = UUID()
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                guard let operation, operation.id == operationId else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                operation.waiters[waiterId] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.removeWaiter(waiterId) }
+        }
+    }
+
+    private func joinOrStart(
+        _ request: Request,
+        waiterId: UUID,
+        continuation: CheckedContinuation<AuthSession, Error>
+    ) {
+        if let operation {
+            guard canJoin(request, operation: operation) else {
+                continuation.resume(throwing: requestFailure(for: request, underlying: contextFailure(stage: requestStage(request), attemptId: operation.id)))
+                return
+            }
+            operation.waiters[waiterId] = continuation
+            return
+        }
+
+        let newOperation = Operation(id: UUID(), request: request)
+        newOperation.waiters[waiterId] = continuation
+        operation = newOperation
+        eventToken = newOperation.id
+        emit(.authorizationActivityChanged(true), whileTokenIs: newOperation.id)
+        guard operation?.id == newOperation.id else { return }
+        newOperation.task = Task { @MainActor [weak self] in
+            await self?.runOperation(newOperation.id)
+        }
+    }
+
+    private func canJoin(_ request: Request, operation: Operation) -> Bool {
+        guard request.bindingId == operation.request.bindingId else { return false }
+        switch (request, operation.request) {
+        case (.register(let pending, let carToken), .register(let existing, let existingToken)):
+            return pending == existing && carToken == existingToken
+        case (.update, .register): return true
+        case (.update, .update): return true
+        case (.register, .update): return false
+        }
+    }
+
+    private func runOperation(_ operationId: UUID) async {
+        guard let current = currentOperation(operationId) else { return }
+        do {
+            let session: AuthSession
+            switch current.request {
+            case .register(let binding, let carToken):
+                session = try await authClient.pair(binding: binding, carToken: carToken)
+                guard isCurrent(operationId) else { return }
+                let registered: RegisteredBinding
+                do {
+                    registered = try await bindingStore.completeRegistration(bindingId: binding.bindingId, carId: session.carId)
+                } catch {
+                    guard isCurrent(operationId) else { return }
+                    let failure = storageFailure(error, attemptId: session.attemptId)
+                    await finish(operationId, result: .failure(RegistrationFailure(failure: failure, registeredBinding: nil)), authFailure: failure)
+                    return
+                }
+                guard isCurrent(operationId) else { return }
+                storedRegisteredBinding = registered
+                guard session.deadline > clock.now else {
+                    let failure = publicationFailure(attemptId: session.attemptId, message: "The session expired before it could be published.")
+                    storedLastError = failure
+                    await deliverFailure(failure, operationId: operationId)
+                    await finish(operationId, result: .failure(RegistrationFailure(failure: failure, registeredBinding: registered)))
+                    return
+                }
+            case .update(let binding):
+                session = try await authClient.token(binding: binding)
+                guard isCurrent(operationId) else { return }
+                guard session.deadline > clock.now else {
+                    let failure = publicationFailure(attemptId: session.attemptId, message: "The session expired before it could be published.")
+                    storedLastError = failure
+                    await deliverFailure(failure, operationId: operationId)
+                    await finish(operationId, result: .failure(failure))
+                    return
+                }
+                if let previous = publishedSession, previous.accessToken == session.accessToken {
+                    let failure = publicationFailure(attemptId: session.attemptId, message: "The authorization server did not issue a new session token.")
+                    storedLastError = failure
+                    await deliverFailure(failure, operationId: operationId)
+                    await finish(operationId, result: .failure(failure))
+                    return
+                }
+            }
+
+            guard isCurrent(operationId), session.deadline > clock.now else {
+                if isCurrent(operationId) {
+                    let failure = publicationFailure(attemptId: session.attemptId, message: "The session expired before it could be published.")
+                    storedLastError = failure
+                    await deliverFailure(failure, operationId: operationId)
+                    await finish(operationId, result: .failure(failure))
+                }
+                return
+            }
+            publishedSession = session
+            lastExpiredAttemptId = nil
+            storedLastError = nil
+            guard emit(.sessionChanged(session), whileTokenIs: operationId), isCurrent(operationId) else { return }
+            await finish(operationId, result: .success(session))
+        } catch is CancellationError {
+            guard isCurrent(operationId) else { return }
+            await finish(operationId, result: .failure(CancellationError()))
+        } catch let failure as RegistrationFailure {
+            guard isCurrent(operationId) else { return }
+            storedLastError = failure.failure
+            await deliverFailure(failure.failure, operationId: operationId)
+            await finish(operationId, result: .failure(failure))
+        } catch let failure as AuthFailure {
+            guard isCurrent(operationId) else { return }
+            storedLastError = failure
+            let result: Error
+            if case .register = current.request {
+                result = RegistrationFailure(failure: failure, registeredBinding: storedRegisteredBinding)
+            } else {
+                result = failure
+            }
+            await deliverFailure(failure, operationId: operationId)
+            await finish(operationId, result: .failure(result))
+        } catch {
+            guard isCurrent(operationId) else { return }
+            let failure = AuthFailure(
+                kind: .local,
+                stage: requestStage(current.request),
+                attemptId: operationId,
+                message: "The authorization operation could not be completed.",
+                diagnosticCode: "LOCAL"
+            )
+            storedLastError = failure
+            let result: Error = isRegistration(current.request)
+                ? RegistrationFailure(failure: failure, registeredBinding: storedRegisteredBinding)
+                : failure
+            await deliverFailure(failure, operationId: operationId)
+            await finish(operationId, result: .failure(result))
+        }
+    }
+
+    private func deliverFailure(_ failure: AuthFailure, operationId: UUID) async {
+        guard isCurrent(operationId), mode == .entry else { return }
+        _ = emit(.entryFailed(failure), whileTokenIs: operationId)
+    }
+
+    private func finish(_ operationId: UUID, result: Result<AuthSession, Error>, authFailure: AuthFailure? = nil) async {
+        guard let completed = currentOperation(operationId) else { return }
+        if let authFailure { storedLastError = authFailure }
+        let waiters = Array(completed.waiters.values)
+        completed.waiters.removeAll()
+        operation = nil
+        let token = eventToken
+        _ = emit(.authorizationActivityChanged(false), whileTokenIs: token)
+        for waiter in waiters { waiter.resume(with: result) }
+    }
+
+    private func removeWaiter(_ waiterId: UUID) {
+        guard let operation, let continuation = operation.waiters.removeValue(forKey: waiterId) else { return }
+        continuation.resume(throwing: CancellationError())
+    }
+
+    private func emit(_ event: SessionManagerEvent, whileTokenIs token: UUID? = nil) -> Bool {
+        let currentSubscribers = subscribers
+        for subscriber in currentSubscribers {
+            if let token, eventToken != token { return false }
+            guard subscribers.contains(where: { $0.id == subscriber.id }) else { continue }
+            subscriber.callback(event)
+        }
+        return token == nil || eventToken == token
+    }
+
+    private func currentOperation(_ id: UUID) -> Operation? {
+        guard let operation, operation.id == id else { return nil }
+        return operation
+    }
+
+    private func isCurrent(_ id: UUID) -> Bool { operation?.id == id }
+
+    private func requestFailure(for request: Request, underlying: AuthFailure) -> Error {
+        if isRegistration(request) {
+            return RegistrationFailure(failure: underlying, registeredBinding: storedRegisteredBinding)
+        }
+        return underlying
+    }
+
+    private func requestStage(_ request: Request) -> AuthStage {
+        switch request {
+        case .register: .pair
+        case .update: .token
+        }
+    }
+
+    private func isRegistration(_ request: Request) -> Bool {
+        if case .register = request { return true }
+        return false
+    }
+
+    private func contextFailure(stage: AuthStage, attemptId: UUID) -> AuthFailure {
+        AuthFailure(
+            kind: .local,
+            stage: stage,
+            attemptId: attemptId,
+            message: "The requested binding is not the active session binding.",
+            diagnosticCode: "BINDING_CONTEXT"
+        )
+    }
+
+    private func unavailableFailure(attemptId: UUID) -> AuthFailure {
+        AuthFailure(
+            kind: .local,
+            stage: .token,
+            attemptId: attemptId,
+            message: "No registered binding is available for session update.",
+            diagnosticCode: "NO_BINDING"
+        )
+    }
+
+    private func publicationFailure(attemptId: UUID, message: String) -> AuthFailure {
+        AuthFailure(
+            kind: .invalidResponse,
+            stage: .publication,
+            attemptId: attemptId,
+            message: message,
+            diagnosticCode: "BAD_RESPONSE"
+        )
+    }
+
+    private func storageFailure(_ error: Error, attemptId: UUID) -> AuthFailure {
+        AuthFailure(
+            kind: .local,
+            stage: .storage,
+            attemptId: attemptId,
+            message: "The registered binding could not be saved.",
+            diagnosticCode: "KEYCHAIN"
+        )
+    }
+}
+
+@MainActor
+private final class SessionSubscription: CancellationHandle {
+    private var cancellation: (() -> Void)?
+
+    init(_ cancellation: @escaping () -> Void) { self.cancellation = cancellation }
+
+    func cancel() {
+        cancellation?()
+        cancellation = nil
+    }
+}
