@@ -24,6 +24,8 @@ struct AuthResponseValidatorTests {
             ("non numeric exp", try successWithClaims(["userId": "user-1", "carId": "car-1", "aud": "zdeep-webview", "exp": "1900"]), "car-1"),
             ("non finite exp", try successWithRawExp("1e999"), "car-1"),
             ("non positive expiry", try LocalAuthFixture.successBody(expiresIn: -1), "car-1"),
+            ("huge finite jwt expiry", try LocalAuthFixture.successBody(expiresIn: 900, exp: 1e300), "car-1"),
+            ("huge finite response expiry", try LocalAuthFixture.successBody(expiresIn: 1e300, exp: 1_900), "car-1"),
             ("expired token", try LocalAuthFixture.successBody(serverTime: 2_000_000, expiresIn: 1, exp: 1_900), "car-1")
         ]
 

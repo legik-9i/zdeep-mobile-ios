@@ -122,10 +122,10 @@ final class AuthClient: AuthClientProtocol {
     ) async throws -> AuthSession {
         try ensureActive(attemptId)
         let timestampMs = clock.wallTimeMs + serverClockOffsetMs
-        guard timestampMs.isFinite, timestampMs >= Double(Int64.min), timestampMs <= Double(Int64.max) else {
+        guard let timestampValue = int64Floor(timestampMs) else {
             throw invalidInput(stage: stage, attemptId: attemptId)
         }
-        let timestamp = String(Int64(timestampMs.rounded(.down)))
+        let timestamp = String(timestampValue)
         let signature: Data
         do {
             signature = try await bindingStore.sign(bindingId: bindingId, bytes: Data("\(timestamp)|".utf8) + body)
@@ -217,11 +217,19 @@ final class AuthClient: AuthClientProtocol {
                 self?.timeoutAttempt(attemptId)
             }
             networkTask = Task { @MainActor [weak self, transport] in
+                guard let self,
+                      !Task.isCancelled,
+                      self.currentAttemptId == attemptId,
+                      self.networkAttemptId == attemptId else { return }
+                guard self.clock.now < deadline else {
+                    self.timeoutAttempt(attemptId)
+                    return
+                }
                 do {
                     let response = try await transport.send(request)
-                    self?.completeNetwork(attemptId, result: .success(response))
+                    self.completeNetwork(attemptId, result: .success(response))
                 } catch {
-                    self?.completeNetwork(attemptId, result: .failure(error))
+                    self.completeNetwork(attemptId, result: .failure(error))
                 }
             }
         }
@@ -294,6 +302,14 @@ final class AuthClient: AuthClientProtocol {
         let base = endpoints.backend.absoluteString
         let prefix = base.hasSuffix("/") ? base : base + "/"
         return URL(string: prefix + path)
+    }
+
+    private func int64Floor(_ value: Double) -> Int64? {
+        guard value.isFinite else { return nil }
+        let roundedDown = value.rounded(.down)
+        // Double(Int64.max) rounds up to 2^63, so the upper bound is exclusive.
+        guard roundedDown >= Double(Int64.min), roundedDown < Double(Int64.max) else { return nil }
+        return Int64(roundedDown)
     }
 
     private func mapBindingFailure(_ error: BindingStoreError, stage: AuthStage, attemptId: UUID) -> Error {

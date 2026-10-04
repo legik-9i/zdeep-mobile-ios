@@ -2,6 +2,9 @@ import CoreFoundation
 import Foundation
 
 nonisolated enum AuthResponseValidator {
+    // ISO 8601 Internet date-time formatting uses a four-digit Gregorian year.
+    private static let maximumISO8601MillisecondsSince1970 = 253_402_300_799_999.0
+
     struct TimestampFailure: Equatable {
         let code: String
         let serverTimeMs: Double
@@ -40,22 +43,28 @@ nonisolated enum AuthResponseValidator {
 
             let expiryFromJWT = jwtExpiry * 1_000
             let expiryFromResponse = serverTimeMs + expiresIn * 1_000
-            guard expiryFromJWT.isFinite, expiryFromResponse.isFinite else {
+            guard expiryFromJWT.isFinite, expiryFromResponse.isFinite,
+                  expiryFromJWT <= maximumISO8601MillisecondsSince1970,
+                  expiryFromResponse <= maximumISO8601MillisecondsSince1970 else {
                 throw invalidResponse(stage: stage, attemptId: attemptId)
             }
             let expiryMs = min(expiryFromJWT, expiryFromResponse)
             let deliveryMs = max(0, durationMilliseconds(receivedAt - sentAt))
             let remainingMs = expiryMs - serverTimeMs - deliveryMs
-            guard remainingMs.isFinite, remainingMs > 0,
-                  let expiryDate = date(millisecondsSince1970: expiryMs) else {
+            guard expiryMs.isFinite, expiryMs > 0,
+                  expiryMs <= maximumISO8601MillisecondsSince1970,
+                  remainingMs.isFinite, remainingMs > 0,
+                  let expiryDate = date(millisecondsSince1970: expiryMs),
+                  let deadlineDelta = duration(milliseconds: remainingMs),
+                  let expiresAt = iso8601(expiryDate) else {
                 throw invalidResponse(stage: stage, attemptId: attemptId)
             }
             return AuthSession(
                 accessToken: accessToken,
                 userId: userId,
                 carId: carId,
-                expiresAt: iso8601(expiryDate),
-                deadline: receivedAt + duration(milliseconds: remainingMs),
+                expiresAt: expiresAt,
+                deadline: receivedAt + deadlineDelta,
                 serverTimeMs: serverTimeMs,
                 attemptId: attemptId
             )
@@ -143,20 +152,30 @@ nonisolated enum AuthResponseValidator {
             + Double(components.attoseconds) / 1_000_000_000_000_000
     }
 
-    private static func duration(milliseconds: Double) -> Duration {
-        let wholeMilliseconds = Int64(milliseconds.rounded(.down))
+    private static func duration(milliseconds: Double) -> Duration? {
+        guard let wholeMilliseconds = int64Floor(milliseconds), wholeMilliseconds > 0 else { return nil }
         return .seconds(wholeMilliseconds / 1_000) + .milliseconds(wholeMilliseconds % 1_000)
     }
 
     private static func date(millisecondsSince1970 milliseconds: Double) -> Date? {
         let seconds = milliseconds / 1_000
-        guard seconds.isFinite else { return nil }
+        guard seconds.isFinite, milliseconds <= maximumISO8601MillisecondsSince1970 else { return nil }
         return Date(timeIntervalSince1970: seconds)
     }
 
-    private static func iso8601(_ date: Date) -> String {
+    private static func iso8601(_ date: Date) -> String? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        return formatter.string(from: date)
+        let value = formatter.string(from: date)
+        guard value.count == 20, formatter.date(from: value) != nil else { return nil }
+        return value
+    }
+
+    private static func int64Floor(_ value: Double) -> Int64? {
+        guard value.isFinite else { return nil }
+        let roundedDown = value.rounded(.down)
+        // Double(Int64.max) rounds up to 2^63, so the upper bound is exclusive.
+        guard roundedDown >= Double(Int64.min), roundedDown < Double(Int64.max) else { return nil }
+        return Int64(roundedDown)
     }
 }

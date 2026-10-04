@@ -13,6 +13,7 @@ final class TestSessionClock: SessionClock {
 
     private(set) var now: Duration = .zero
     var wallTimeMs: Double
+    var onSchedule: (@MainActor () -> Void)?
     private var entries: [Entry] = []
     private var cancelled: Set<UUID> = []
 
@@ -23,6 +24,9 @@ final class TestSessionClock: SessionClock {
     func schedule(at deadline: Duration, action: @escaping @MainActor () -> Void) -> any CancellationHandle {
         let id = UUID()
         entries.append(Entry(id: id, deadline: deadline, action: action))
+        let scheduled = onSchedule
+        onSchedule = nil
+        scheduled?()
         return TestCancellationHandle { [weak self] in self?.cancelled.insert(id) }
     }
 

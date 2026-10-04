@@ -20,8 +20,12 @@ final class URLSessionAuthHTTPTransport: AuthHTTPTransport {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        try Task.checkCancellation()
         let taskId = UUID()
-        let task = Task { try await session.data(for: request) }
+        let task = Task {
+            try Task.checkCancellation()
+            return try await session.data(for: request)
+        }
         currentTaskId = taskId
         currentTask = task
         defer {

@@ -5,6 +5,51 @@ import Testing
 
 @MainActor
 struct AuthClientTests {
+    @Test func test_timestamp_at_unrepresentable_upper_int64_boundary_is_invalid_input() async throws {
+        let (store, binding) = try await LocalAuthFixture.makePendingBinding()
+        let clock = TestSessionClock(wallTimeMs: Double(Int64.max))
+        let transport = TestAuthHTTPTransport()
+        let client = AuthClient(bindingStore: store, transport: transport, clock: clock, endpoints: AppEnvironment.local.endpoints)
+
+        do {
+            _ = try await client.pair(binding: binding, carToken: try LocalAuthFixture.carToken())
+            Issue.record("2^63 cannot be represented as an Int64 timestamp")
+        } catch let failure as AuthFailure {
+            #expect(failure.kind == .invalidResponse)
+            #expect(failure.diagnosticCode == "BAD_RESPONSE")
+        }
+        #expect(transport.requests.isEmpty)
+    }
+
+    @Test func test_cancel_before_queued_network_launch_does_not_send() async throws {
+        let (store, binding) = try await LocalAuthFixture.makePendingBinding()
+        let clock = TestSessionClock()
+        let transport = TestAuthHTTPTransport()
+        let client = AuthClient(bindingStore: store, transport: transport, clock: clock, endpoints: AppEnvironment.local.endpoints)
+        clock.onSchedule = { Task { @MainActor in client.invalidateCurrentAttempt() } }
+
+        do {
+            _ = try await client.pair(binding: binding, carToken: try LocalAuthFixture.carToken())
+            Issue.record("Invalidated attempts must complete with cancellation")
+        } catch is CancellationError {}
+
+        for _ in 0..<4 { await Task.yield() }
+        #expect(transport.requests.isEmpty)
+        #expect(transport.cancelCount == 1)
+    }
+
+    @Test func test_urlsession_transport_rejects_already_cancelled_caller() async throws {
+        let transport = URLSessionAuthHTTPTransport()
+        let request = URLRequest(url: URL(string: "zdeep-auth-test://local/never-send")!)
+        let caller = Task { @MainActor in try await transport.send(request) }
+        caller.cancel()
+
+        do {
+            _ = try await caller.value
+            Issue.record("A cancelled caller must not start a URLSession data task")
+        } catch is CancellationError {}
+    }
+
     @Test func test_signs_exact_sent_body_and_sends_once() async throws {
         let (store, binding) = try await LocalAuthFixture.makePendingBinding()
         let clock = TestSessionClock()
