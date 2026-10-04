@@ -18,6 +18,13 @@ protocol WebSessionFactory {
 }
 
 @MainActor
+struct DefaultWebSessionFactory: WebSessionFactory {
+    func makeSession(for environment: AppEnvironment, endpoints: EnvironmentEndpoints) -> any WebSessionHandle {
+        WebSession(trustedURL: endpoints.web)
+    }
+}
+
+@MainActor
 final class AppCoordinator: ObservableObject {
     @Published private(set) var environment: AppEnvironment
     @Published private(set) var isWebViewOpen = false

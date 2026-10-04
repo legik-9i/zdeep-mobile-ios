@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import WebKit
+import UIKit
 
 @MainActor
 final class WebSession: NSObject, WebSessionHandle, ObservableObject {
@@ -14,25 +15,47 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var navigationError: String?
     @Published private(set) var isClosed = false
+    private(set) var currentDocument: WebDocumentIdentity?
+    var onEvent: ((WebSessionEvent) -> Void)?
 
 #if DEBUG
     private let diagnosticExecutor: DiagnosticExecutor
 #endif
     private var navigationCallbacks = NavigationCallbackGate<ObjectIdentifier>()
     private var pendingUserNavigationURL: URL?
+    private var trustedURL: URL?
+    private var documentContext: WebDocumentContext?
+    private var bridge: (any WebDocumentBridgeHandling)?
+    private let openExternalURL: (URL) -> Void
+    private static let infrastructureScripts = [WKUserScript(
+        source: "window.ZdeepNative = {};",
+        injectionTime: .atDocumentStart,
+        forMainFrameOnly: true,
+        in: .page
+    )]
 
-    override init() {
+    var isCurrentDocumentCommitted: Bool {
+        guard let currentDocument else { return false }
+        return documentContext?.isCurrentAndCommitted(currentDocument) == true
+    }
+
+    override convenience init() {
+        self.init(trustedURL: nil)
+    }
+
+    init(trustedURL: URL?, openExternalURL: ((URL) -> Void)? = nil) {
         let contentController = WKUserContentController()
-        contentController.addUserScript(WKUserScript(
-            source: "window.ZdeepNative = {};",
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true,
-            in: .page
-        ))
+        Self.infrastructureScripts.forEach(contentController.addUserScript)
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = contentController
+        configuration.websiteDataStore = .default()
         webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.allowsBackForwardNavigationGestures = false
+        self.trustedURL = trustedURL
+        self.openExternalURL = openExternalURL ?? { url in
+            Task { @MainActor in UIApplication.shared.open(url) }
+        }
 
 #if DEBUG
         let webView = self.webView
@@ -78,18 +101,41 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
 #endif
         super.init()
         webView.navigationDelegate = self
+        webView.uiDelegate = self
     }
 
     func load(url: URL) {
         guard !isClosed else { return }
-        pendingUserNavigationURL = nil
+        if documentContext?.phase != .preparing || requestedURL != url {
+            prepare(url: url, reason: currentDocument == nil ? .initial : .explicitRetry)
+        }
+        startLoad(url: url)
+    }
+
+    func prepare(url: URL, reason: WebPreparationReason) {
+        guard !isClosed else { return }
+        trustedURL = trustedURL ?? url
+        let origin = trustedURL ?? url
+        let context = documentContext ?? WebDocumentContext(containerId: id, trustedURL: origin)
+        documentContext = context
+        let previous = context.currentIdentity
+        let identity = context.prepare(url: url, reason: reason)
         navigationCallbacks.clear()
+        if let previous, previous != identity { bridge?.closeDocument(previous) }
+        currentDocument = identity
         requestedURL = url
         redirectChain = [url]
         responseStatusCode = nil
         currentURL = url
         navigationError = nil
         isLoading = true
+        onEvent?(.documentPreparing(identity, url, reason))
+        installUserScripts(for: identity)
+    }
+
+    private func startLoad(url: URL) {
+        pendingUserNavigationURL = nil
+        navigationCallbacks.clear()
         let navigation: WKNavigation?
         if url.isFileURL {
             navigation = webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
@@ -101,23 +147,25 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
             navigationError = "WebKit did not start navigation"
             return
         }
-        navigationCallbacks.replace(with: ObjectIdentifier(navigation!))
+        let navigationId = ObjectIdentifier(navigation!)
+        navigationCallbacks.replace(with: navigationId)
+        if let currentDocument { documentContext?.bindNavigation(navigationId, to: currentDocument) }
     }
 
     func reload() {
         guard !isClosed, requestedURL != nil else { return }
+        guard let url = requestedURL else { return }
+        prepare(url: url, reason: .explicitRetry)
         pendingUserNavigationURL = nil
         navigationCallbacks.clear()
-        redirectChain = requestedURL.map { [$0] } ?? []
-        responseStatusCode = nil
-        navigationError = nil
-        isLoading = true
         guard let navigation = webView.reload() else {
             isLoading = false
             navigationError = "WebKit did not reload the page"
             return
         }
-        navigationCallbacks.replace(with: ObjectIdentifier(navigation))
+        let navigationId = ObjectIdentifier(navigation)
+        navigationCallbacks.replace(with: navigationId)
+        if let currentDocument { documentContext?.bindNavigation(navigationId, to: currentDocument) }
     }
 
 #if DEBUG
@@ -146,11 +194,20 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         guard !isClosed else { return }
         isClosed = true
         isLoading = false
+        if let currentDocument { bridge?.closeDocument(currentDocument) }
+        bridge?.close()
+        bridge = nil
+        documentContext?.close()
+        documentContext = nil
+        currentDocument = nil
+        onEvent = nil
 #if DEBUG
         diagnosticExecutor.close()
 #endif
         webView.stopLoading()
         webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        navigationCallbacks.clear()
     }
 
 #if DEBUG
@@ -173,9 +230,21 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     }
 
     func recordNavigationFailure(_ message: String) {
+        navigationCallbacks.clear()
         isLoading = false
         navigationError = message
         updateCurrentURL(webView.url)
+        if let currentDocument {
+            onEvent?(.documentFailed(currentDocument, AuthFailure(
+                kind: .network,
+                stage: .web,
+                attemptId: currentDocument.attemptId,
+                message: message,
+                httpStatus: responseStatusCode,
+                diagnosticCode: "WEB_NAVIGATION_FAILED"
+            )))
+            documentContext?.fail(currentDocument)
+        }
     }
 
     @discardableResult
@@ -198,6 +267,24 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
 
     func prepareForUserLinkNavigation(to url: URL?) {
         pendingUserNavigationURL = url
+    }
+
+    func attachBridge(_ bridge: any WebDocumentBridgeHandling) {
+        guard !isClosed else { bridge.close(); return }
+        self.bridge = bridge
+    }
+
+    private func installUserScripts(for identity: WebDocumentIdentity) {
+        let controller = webView.configuration.userContentController
+        controller.removeAllUserScripts()
+        Self.infrastructureScripts.forEach(controller.addUserScript)
+        if let bridge { controller.addUserScript(bridge.bootstrap(documentId: identity.documentId)) }
+    }
+
+    private func failCurrentDocument(_ message: String, status: Int? = nil) {
+        responseStatusCode = status ?? responseStatusCode
+        navigationCallbacks.clear()
+        recordNavigationFailure(message)
     }
 
     func recordCurrentNavigationURL(_ url: URL?) {
@@ -266,6 +353,7 @@ extension WebSession: WKNavigationDelegate {
         guard let navigation else { return }
         let id = ObjectIdentifier(navigation)
         guard adoptNavigation(id, requestedURL: pendingUserNavigationURL ?? webView.url) else { return }
+        if let currentDocument { documentContext?.bindNavigation(id, to: currentDocument) }
         pendingUserNavigationURL = nil
 #if DEBUG
         diagnosticExecutor.navigationDidStart()
@@ -277,17 +365,61 @@ extension WebSession: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        if navigationAction.targetFrame?.isMainFrame != false {
-            prepareForUserLinkNavigation(to: navigationAction.navigationType == .linkActivated
-                ? navigationAction.request.url
-                : nil)
+        let url = navigationAction.request.url
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? false
+        let userInitiated = navigationAction.navigationType == .linkActivated
+        let decision: WebNavigationDecision = url?.isFileURL == true
+            && url == requestedURL
+            && documentContext?.phase == .preparing
+            ? .allow
+            : WebNavigationPolicy.decide(
+            url: url,
+            trustedURL: trustedURL,
+            navigationType: navigationAction.navigationType,
+            isMainFrame: isMainFrame,
+            hasTargetFrame: navigationAction.targetFrame != nil,
+            userInitiated: userInitiated
+        )
+        switch decision {
+        case .allow:
+            if isMainFrame, let url, navigationAction.navigationType != .backForward {
+                let sameDocument = WebDocumentContext.isSameDocumentURL(url, as: webView.url)
+                if documentContext?.phase == .committed, !sameDocument {
+                    prepare(url: url, reason: .fullNavigation)
+                }
+                prepareForUserLinkNavigation(to: userInitiated && !sameDocument ? url : nil)
+            }
+            decisionHandler(.allow)
+        case .openExternal:
+            if let url { openExternalURL(url) }
+            decisionHandler(.cancel)
+        case .cancel:
+            if isMainFrame, let url, !WebNavigationPolicy.sameOrigin(url, trustedURL) {
+                failCurrentDocument("Blocked navigation to an untrusted origin")
+            }
+            decisionHandler(.cancel)
         }
-        decisionHandler(.allow)
     }
 
     func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation!) {
         guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
+        if let url = webView.url, !WebNavigationPolicy.sameOrigin(url, trustedURL) {
+            failCurrentDocument("Redirected to an untrusted origin")
+            return
+        }
         recordCurrentNavigationURL(webView.url)
+        if let url = webView.url { documentContext?.recordRedirect(url) }
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard let navigation else { return }
+        let id = ObjectIdentifier(navigation)
+        guard navigationCallbacks.isCurrent(id),
+              let identity = documentContext?.identity(for: id),
+              documentContext?.commit(identity) == true else { return }
+        currentDocument = identity
+        bridge?.documentDidCommit(identity)
+        onEvent?(.documentCommitted(identity))
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -306,8 +438,14 @@ extension WebSession: WKNavigationDelegate {
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
-        if navigationResponse.isForMainFrame, navigationResponse.response.url == webView.url {
-            recordResponseStatusCode((navigationResponse.response as? HTTPURLResponse)?.statusCode)
+        if navigationResponse.isForMainFrame {
+            let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode
+            recordResponseStatusCode(status)
+            if let status, status >= 400 {
+                failCurrentDocument("HTTP \(status)", status: status)
+                decisionHandler(.cancel)
+                return
+            }
         }
         decisionHandler(.allow)
     }
@@ -321,11 +459,35 @@ extension WebSession: WKNavigationDelegate {
         guard let navigation, navigationCallbacks.isCurrent(ObjectIdentifier(navigation)) else { return }
         recordNavigationFailure(error)
     }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        onEvent?(.processTerminated)
+    }
 }
 
-@MainActor
-struct DefaultWebSessionFactory: WebSessionFactory {
-    func makeSession(for environment: AppEnvironment, endpoints: EnvironmentEndpoints) -> any WebSessionHandle {
-        WebSession()
+extension WebSession: WKUIDelegate {
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        let url = navigationAction.request.url
+        let decision = WebNavigationPolicy.decide(
+            url: url,
+            trustedURL: trustedURL,
+            navigationType: navigationAction.navigationType,
+            isMainFrame: false,
+            hasTargetFrame: false,
+            userInitiated: navigationAction.navigationType == .linkActivated
+        )
+        if decision == .openExternal, let url {
+            openExternalURL(url)
+        } else if decision == .allow, let url {
+            prepare(url: url, reason: .fullNavigation)
+            prepareForUserLinkNavigation(to: url)
+            startLoad(url: url)
+        }
+        return nil
     }
 }

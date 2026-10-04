@@ -83,6 +83,63 @@ struct WebSessionIntegrationTests {
         #expect(nativeType == .string("object"))
     }
 
+    @Test func test_prepare_commit_and_reload_have_distinct_documents() async throws {
+        let fixture = try #require(
+            Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")
+        )
+        let session = WebSession(trustedURL: environment.endpoints.web)
+        defer { session.close() }
+        session.load(url: fixture)
+        _ = try await session.waitForJavaScript(
+            "document.readyState", equals: .string("complete"), timeout: .seconds(5)
+        )
+        let prepared = try #require(session.currentDocument)
+        #expect(session.isCurrentDocumentCommitted)
+
+        session.reload()
+        _ = try await session.waitForJavaScript(
+            "document.readyState", equals: .string("complete"), timeout: .seconds(60)
+        )
+        let reloaded = try #require(session.currentDocument)
+        #expect(reloaded != prepared)
+    }
+
+    @Test func test_file_fixture_has_no_real_session() async throws {
+        let fixture = try #require(
+            Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")
+        )
+        let session = WebSession(trustedURL: environment.endpoints.web)
+        defer { session.close() }
+        session.load(url: fixture)
+        _ = try await session.waitForJavaScript(
+            "document.readyState", equals: .string("complete"), timeout: .seconds(5)
+        )
+        let nativeType = try await session.executeJavaScript("typeof window.ZdeepNative", timeout: .seconds(5))
+        #expect(nativeType == .string("object"))
+        #expect(session.currentDocument?.containerId == session.id)
+        #expect(session.currentDocument?.documentId != nil)
+    }
+
+    @Test func test_close_releases_old_webview_and_history() async throws {
+        let fixture = try #require(
+            Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")
+        )
+        var session: WebSession? = WebSession(trustedURL: environment.endpoints.web)
+        weak var oldWebView = session?.webView
+        session?.load(url: fixture)
+        _ = try await session?.waitForJavaScript(
+            "document.readyState", equals: .string("complete"), timeout: .seconds(5)
+        )
+        let hasHistory = try await session?.executeJavaScript(
+            "history.pushState({}, '', '#close-history'); history.length > 1",
+            timeout: .seconds(5)
+        )
+        #expect(hasHistory == .bool(true))
+        session?.close()
+        session = nil
+        #expect(oldWebView == nil)
+    }
+
     @Test func test_closed_session_cannot_apply_result() async throws {
         let session = WebSession()
         let fixture = try #require(
