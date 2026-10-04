@@ -11,9 +11,17 @@ final class TestSessionClock: SessionClock {
         let action: @MainActor () -> Void
     }
 
-    private(set) var now: Duration = .zero
+    private var storedNow: Duration = .zero
+    var now: Duration {
+        let value = storedNow
+        let callback = onNextNowRead
+        onNextNowRead = nil
+        callback?()
+        return value
+    }
     var wallTimeMs: Double
     var onSchedule: (@MainActor () -> Void)?
+    var onNextNowRead: (@MainActor () -> Void)?
     private var entries: [Entry] = []
     private var cancelled: Set<UUID> = []
     var activeScheduleCount: Int { entries.filter { !cancelled.contains($0.id) }.count }
@@ -32,10 +40,10 @@ final class TestSessionClock: SessionClock {
     }
 
     func advance(by duration: Duration) {
-        now += duration
+        storedNow += duration
         wallTimeMs += Double(duration.components.seconds) * 1_000
             + Double(duration.components.attoseconds) / 1_000_000_000_000_000
-        let due = entries.filter { $0.deadline <= now && !cancelled.contains($0.id) }
+        let due = entries.filter { $0.deadline <= storedNow && !cancelled.contains($0.id) }
         entries.removeAll { $0.deadline <= now || cancelled.contains($0.id) }
         for entry in due { entry.action() }
     }

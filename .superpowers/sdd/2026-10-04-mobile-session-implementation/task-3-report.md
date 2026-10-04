@@ -62,3 +62,24 @@ python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE
 Результат: PASS, 85 тестов в 13 suites. Result bundle: `.artifacts/runs/20261004-154430-1791117870047952000/Tests.xcresult`. Первый запуск без sandbox разрешения остановлен из-за недоступности CoreSimulator; повтор выполнен с разрешённым Simulator доступом. Между production правками возник диагностический сбой Swift type inference в cancellation wrapper; явная аннотация результата `AuthSession` устранила его, после чего полный unit прошёл.
 
 Integration не запускался: исправления ограничены менеджером и его unit-регрессиями.
+
+## Дополнительный review fix round 2
+
+Добавлены две регрессии по повторному ревью:
+
+1. Stop из callback `authorizationActivityChanged(false)` проверяет один поток `[true, false]` и `CancellationError` для обоих consumers. Существующий тест явного stop во время активной операции также продолжает проверять ровно один `false`.
+2. Fake clock переводит дедлайн за границу на проверке после общей операции. Первый `sessionExpired` subscriber вызывает `stop`; caller должен получить `CancellationError`, а следующий subscriber не должен увидеть устаревшее событие.
+
+**RED:** до production изменения оба сценария падали. Повтор RED после исправления ошибки компиляции fixture дал 86 тестов и два упавших сценария. Bundle: `.artifacts/runs/20261004-155207-1791118327886042000/Tests.xcresult`.
+
+Исправления: у общей операции появился latch `didEmitActivityFinished`; finish фиксирует отправку `false` до callback, а stop всё ещё видит текущую операцию и отменяет её consumers, но не рассылает второй `false`. Ошибка истечения при возврате теперь отправляет событие с текущим event token и проверяет актуальность токена/сессии после callback; reentrant stop обрывает старый flow через `CancellationError`.
+
+Проверки на Simulator `0DDEE416-EECF-4BF3-8F15-BA93A980033A`:
+
+```sh
+python3 scripts/zdeep.py test --environment local --suite unit --only 'SessionManagerTests/test_stop_from_activity_finished_event_cancels_all_consumers()' --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A
+python3 scripts/zdeep.py test --environment local --suite unit --only 'SessionManagerTests/test_expired_return_stop_cancels_caller_and_stops_event_delivery()' --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A --skip-build
+python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A --skip-build
+```
+
+Результаты: focused проверки PASS 1/1 каждая; полный unit PASS 86 тестов в 13 suites. Полный result bundle: `.artifacts/runs/20261004-155411-1791118451600065000/Tests.xcresult`. Integration не запускался.

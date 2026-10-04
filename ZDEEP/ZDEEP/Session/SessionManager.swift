@@ -50,6 +50,7 @@ final class SessionManager: SessionManaging {
         let request: Request
         var waiters: [UUID: CheckedContinuation<AuthSession, Error>] = [:]
         var task: Task<Void, Never>?
+        var didEmitActivityFinished = false
 
         init(id: UUID, request: Request) {
             self.id = id
@@ -145,7 +146,8 @@ final class SessionManager: SessionManaging {
 
     func stop() {
         let previousOperation = operation
-        let wasInFlight = previousOperation != nil
+        let shouldEmitActivityFinished = previousOperation.map { !$0.didEmitActivityFinished } ?? false
+        previousOperation?.didEmitActivityFinished = true
         eventToken = UUID()
         operation = nil
         storedRegisteredBinding = nil
@@ -162,7 +164,7 @@ final class SessionManager: SessionManaging {
             previousOperation.waiters.removeAll()
             for waiter in waiters { waiter.resume(throwing: CancellationError()) }
         }
-        if wasInFlight {
+        if shouldEmitActivityFinished {
             emit(.authorizationActivityChanged(false), whileTokenIs: eventToken)
         }
     }
@@ -356,7 +358,10 @@ final class SessionManager: SessionManaging {
     private func finish(_ operationId: UUID, result: Result<AuthSession, Error>, authFailure: AuthFailure? = nil) async {
         guard let completed = currentOperation(operationId) else { return }
         if let authFailure { storedLastError = authFailure }
-        _ = emit(.authorizationActivityChanged(false), whileTokenIs: operationId)
+        if !completed.didEmitActivityFinished {
+            completed.didEmitActivityFinished = true
+            _ = emit(.authorizationActivityChanged(false), whileTokenIs: operationId)
+        }
         guard isCurrent(operationId) else { return }
 
         var finalResult = result
@@ -458,14 +463,22 @@ final class SessionManager: SessionManaging {
     }
 
     private func expiredReturnFailure(_ session: AuthSession, isRegistration: Bool) -> Error {
+        let token = eventToken
+        guard publishedSession?.attemptId == session.attemptId else { return CancellationError() }
         let failure = publicationFailure(
             attemptId: session.attemptId,
             message: "The session expired before it could be returned."
         )
         storedLastError = failure
-        if publishedSession?.attemptId == session.attemptId, lastExpiredAttemptId != session.attemptId {
+        if lastExpiredAttemptId != session.attemptId {
             lastExpiredAttemptId = session.attemptId
-            emit(.sessionExpired(failure))
+            guard emit(.sessionExpired(failure), whileTokenIs: token),
+                  publishedSession?.attemptId == session.attemptId else {
+                return CancellationError()
+            }
+        }
+        guard eventToken == token, publishedSession?.attemptId == session.attemptId else {
+            return CancellationError()
         }
         if isRegistration {
             return RegistrationFailure(failure: failure, registeredBinding: storedRegisteredBinding)

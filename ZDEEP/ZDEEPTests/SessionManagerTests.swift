@@ -178,8 +178,12 @@ struct SessionManagerTests {
         let (store, pending, _) = try await makePendingStore()
         let client = ControlledManagerAuthClient(suspendNextPair: true)
         let manager = SessionManager(bindingStore: store, authClient: client, clock: TestSessionClock())
+        var activity: [Bool] = []
         let subscription = manager.subscribe { event in
-            if case .authorizationActivityChanged(false) = event { manager.stop() }
+            if case .authorizationActivityChanged(let value) = event {
+                activity.append(value)
+                if !value { manager.stop() }
+            }
         }
         defer { subscription.cancel() }
 
@@ -196,6 +200,7 @@ struct SessionManagerTests {
             } catch is CancellationError {}
         }
         #expect(manager.currentSession == nil)
+        #expect(activity == [true, false])
     }
 
     @Test func test_session_changed_cancellation_only_cancels_that_consumer() async throws {
@@ -361,6 +366,40 @@ struct SessionManagerTests {
             #expect(failure.registeredBinding?.bindingId == pending.bindingId)
         }
         #expect(manager.currentSession == nil)
+    }
+
+    @Test func test_expired_return_stop_cancels_caller_and_stops_event_delivery() async throws {
+        let (store, pending, _) = try await makePendingStore()
+        let clock = TestSessionClock()
+        let client = ControlledManagerAuthClient()
+        client.enqueuePair(.success(session(deadline: .seconds(5))))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: clock)
+        var expiredEvents = 0
+        let stopping = manager.subscribe { event in
+            switch event {
+            case .authorizationActivityChanged(false):
+                clock.onNextNowRead = { clock.advance(by: .seconds(5)) }
+            case .sessionExpired:
+                manager.stop()
+            default:
+                break
+            }
+        }
+        let later = manager.subscribe { event in
+            if case .sessionExpired = event { expiredEvents += 1 }
+        }
+        defer { stopping.cancel(); later.cancel() }
+
+        do {
+            _ = try await manager.register(binding: pending, carToken: "car-token")
+            Issue.record("stop from expired return callback must cancel the caller")
+        } catch is CancellationError {}
+        catch {
+            Issue.record("Expected CancellationError after stop, got: \(error)")
+        }
+        #expect(expiredEvents == 0)
+        #expect(manager.currentSession == nil)
+        #expect(manager.registeredBinding == nil)
     }
 
     @Test func test_register_rejects_different_binding_without_pairing() async throws {
