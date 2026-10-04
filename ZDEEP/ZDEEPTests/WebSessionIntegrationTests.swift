@@ -120,6 +120,61 @@ struct WebSessionIntegrationTests {
         #expect(session.currentDocument?.documentId != nil)
     }
 
+    @Test func test_foreign_server_redirect_does_not_commit_document() async throws {
+        let fixture = try HTTPRedirectFixtureServer(
+            location: URL(string: "https://outside.invalid/final")!
+        )
+        let redirect = try await fixture.start()
+        var session: WebSession? = WebSession(trustedURL: redirect)
+        weak var oldWebView = session?.webView
+        var committed = false
+        var failed = false
+        session?.onEvent = { event in
+            switch event {
+            case .documentCommitted:
+                committed = true
+            case .documentFailed:
+                failed = true
+            default:
+                break
+            }
+        }
+        session?.load(url: redirect)
+        for _ in 0..<100 where session?.isLoading == true && !failed {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(failed)
+        #expect(!committed)
+        session?.close()
+        session = nil
+        for _ in 0..<20 where oldWebView != nil {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(oldWebView == nil)
+    }
+
+    @Test func test_unsupported_user_link_preserves_current_document() async throws {
+        var session: WebSession? = try await makeLoadedSession()
+        weak var oldWebView = session?.webView
+        var failed = false
+        session?.onEvent = { event in
+            if case .documentFailed = event { failed = true }
+        }
+
+        _ = try await session?.executeJavaScript(
+            "const link = document.createElement('a'); link.href = 'mailto:help@example.com'; document.body.append(link); link.click(); true",
+            timeout: .seconds(5)
+        )
+        try await Task.sleep(for: .milliseconds(250))
+
+        #expect(!failed)
+        #expect(session?.isCurrentDocumentCommitted == true)
+        session?.close()
+        session = nil
+        #expect(oldWebView == nil)
+    }
+
     @Test func test_close_releases_old_webview_and_history() async throws {
         let fixture = try #require(
             Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")
@@ -137,6 +192,10 @@ struct WebSessionIntegrationTests {
         #expect(hasHistory == .bool(true))
         session?.close()
         session = nil
+        for _ in 0..<20 where oldWebView != nil {
+            await Task.yield()
+            try await Task.sleep(for: .milliseconds(25))
+        }
         #expect(oldWebView == nil)
     }
 

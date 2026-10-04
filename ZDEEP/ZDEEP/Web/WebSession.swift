@@ -394,7 +394,12 @@ extension WebSession: WKNavigationDelegate {
             if let url { openExternalURL(url) }
             decisionHandler(.cancel)
         case .cancel:
-            if isMainFrame, let url, !WebNavigationPolicy.sameOrigin(url, trustedURL) {
+            if WebNavigationPolicy.shouldFailDocumentNavigation(
+                url: url,
+                trustedURL: trustedURL,
+                isMainFrame: isMainFrame,
+                navigationType: navigationAction.navigationType
+            ) {
                 failCurrentDocument("Blocked navigation to an untrusted origin")
             }
             decisionHandler(.cancel)
@@ -441,8 +446,18 @@ extension WebSession: WKNavigationDelegate {
         if navigationResponse.isForMainFrame {
             let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode
             recordResponseStatusCode(status)
-            if let status, status >= 400 {
-                failCurrentDocument("HTTP \(status)", status: status)
+            if WebNavigationPolicy.decideMainFrameResponse(
+                url: navigationResponse.response.url,
+                trustedURL: trustedURL,
+                statusCode: status,
+                requestedURL: requestedURL,
+                isPreparing: documentContext?.phase == .preparing
+            ) == .cancel {
+                failCurrentDocument(
+                    status.map { $0 >= 400 ? "HTTP \($0)" : "Redirected to an untrusted origin" }
+                        ?? "Redirected to an untrusted origin",
+                    status: status
+                )
                 decisionHandler(.cancel)
                 return
             }

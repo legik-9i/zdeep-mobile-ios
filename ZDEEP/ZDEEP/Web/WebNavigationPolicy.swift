@@ -8,6 +8,32 @@ enum WebNavigationDecision: Equatable {
 }
 
 enum WebNavigationPolicy {
+    static func decideMainFrameResponse(
+        url: URL?,
+        trustedURL: URL?,
+        statusCode: Int?,
+        requestedURL: URL? = nil,
+        isPreparing: Bool = false
+    ) -> WebNavigationDecision {
+        if let url, url.isFileURL, isPreparing, requestedURL == url {
+            return .allow
+        }
+        guard sameOrigin(url, trustedURL) else { return .cancel }
+        if let statusCode, statusCode >= 400 { return .cancel }
+        return .allow
+    }
+
+    static func shouldFailDocumentNavigation(
+        url: URL?,
+        trustedURL: URL?,
+        isMainFrame: Bool,
+        navigationType: WKNavigationType
+    ) -> Bool {
+        isMainFrame
+            && navigationType != .linkActivated
+            && !sameOrigin(url, trustedURL)
+    }
+
     static func decide(
         url: URL?,
         trustedURL: URL?,

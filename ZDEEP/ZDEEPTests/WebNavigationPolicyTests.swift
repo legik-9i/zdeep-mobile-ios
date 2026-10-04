@@ -64,6 +64,51 @@ struct WebNavigationPolicyTests {
         ) == .cancel)
     }
 
+    @Test func test_foreign_main_frame_response_is_rejected_even_when_successful() {
+        #expect(WebNavigationPolicy.decideMainFrameResponse(
+            url: URL(string: "https://outside.example/final")!, trustedURL: origin, statusCode: 200
+        ) == .cancel)
+        #expect(WebNavigationPolicy.decideMainFrameResponse(
+            url: URL(string: "https://app.example/final")!, trustedURL: origin, statusCode: 200
+        ) == .allow)
+        #expect(WebNavigationPolicy.decideMainFrameResponse(
+            url: URL(string: "https://app.example/final")!, trustedURL: origin, statusCode: 503
+        ) == .cancel)
+        let fixture = URL(fileURLWithPath: "/tmp/document-start.html")
+        #expect(WebNavigationPolicy.decideMainFrameResponse(
+            url: fixture,
+            trustedURL: origin,
+            statusCode: nil,
+            requestedURL: fixture,
+            isPreparing: true
+        ) == .allow)
+        #expect(WebNavigationPolicy.decideMainFrameResponse(
+            url: fixture,
+            trustedURL: origin,
+            statusCode: nil,
+            requestedURL: URL(fileURLWithPath: "/tmp/other.html"),
+            isPreparing: true
+        ) == .cancel)
+        #expect(WebNavigationPolicy.decideMainFrameResponse(
+            url: fixture,
+            trustedURL: origin,
+            statusCode: nil,
+            requestedURL: fixture,
+            isPreparing: false
+        ) == .cancel)
+    }
+
+    @Test func test_rejected_user_link_does_not_fail_current_document() {
+        #expect(!WebNavigationPolicy.shouldFailDocumentNavigation(
+            url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
+            isMainFrame: true, navigationType: .linkActivated
+        ))
+        #expect(WebNavigationPolicy.shouldFailDocumentNavigation(
+            url: URL(string: "https://outside.example/redirect")!, trustedURL: origin,
+            isMainFrame: true, navigationType: .other
+        ))
+    }
+
     @Test func test_fragment_and_history_api_remain_same_document() {
         let base = URL(string: "https://app.example/path")!
         #expect(WebDocumentContext.isSameDocumentURL(URL(string: "https://app.example/path#section")!, as: base))
