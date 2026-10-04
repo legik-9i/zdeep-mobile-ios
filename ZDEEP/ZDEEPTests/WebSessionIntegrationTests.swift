@@ -3,6 +3,7 @@ import Testing
 @testable import ZDEEP
 
 @MainActor
+@Suite(.serialized)
 struct WebSessionIntegrationTests {
     private var environment: AppEnvironment {
         let rawValue = ProcessInfo.processInfo.environment["ZDEEP_ENVIRONMENT"] ?? "local"

@@ -162,7 +162,7 @@ class BuildManager:
             integration_selector = f"{target_prefix}{result_only}"
         elif only is not None and suite == "unit":
             result_only = only.removeprefix("ZDEEPTests/")
-        code_signing = suite in {"unit", "all"} and environment == "local"
+        code_signing = suite in {"unit", "integration", "all"} and environment == "local"
         fingerprint = self.fingerprint(simulator, code_signing=code_signing)
         if skip_build:
             artifact = self.cache.get(fingerprint)

@@ -77,6 +77,20 @@ class BuildManagerTests(unittest.TestCase):
         self.assertNotIn("CODE_SIGN_IDENTITY=-", test_unit)
 
         self.runner.reset_mock()
+        self.manager.run("integration", "local", "SIM-1")
+        local_integration = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=YES", local_integration)
+        self.assertIn("CODE_SIGN_IDENTITY=-", local_integration)
+        integration_run = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+        self.assertIn("-only-testing:ZDEEPTests/WebSessionIntegrationTests", integration_run)
+
+        self.runner.reset_mock()
+        self.manager.run("integration", "test", "SIM-1")
+        test_integration = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", test_integration)
+        self.assertNotIn("CODE_SIGN_IDENTITY=-", test_integration)
+
+        self.runner.reset_mock()
         self.manager.run("all", "local", "SIM-1")
         local_all = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
         self.assertIn("CODE_SIGNING_ALLOWED=YES", local_all)
