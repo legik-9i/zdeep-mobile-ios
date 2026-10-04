@@ -175,6 +175,26 @@ struct WebSessionIntegrationTests {
         #expect(oldWebView == nil)
     }
 
+    @Test func test_unsupported_form_submission_preserves_current_document() async throws {
+        let session = try await makeLoadedSession()
+        defer { session.close() }
+        let document = try #require(session.currentDocument)
+        var failed = false
+        session.onEvent = { event in
+            if case .documentFailed = event { failed = true }
+        }
+
+        _ = try await session.executeJavaScript(
+            "const form = document.createElement('form'); form.action = 'mailto:help@example.com'; document.body.append(form); form.requestSubmit(); true",
+            timeout: .seconds(5)
+        )
+        try await Task.sleep(for: .milliseconds(250))
+
+        #expect(!failed)
+        #expect(session.currentDocument == document)
+        #expect(session.isCurrentDocumentCommitted)
+    }
+
     @Test func test_close_releases_old_webview_and_history() async throws {
         let fixture = try #require(
             Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")

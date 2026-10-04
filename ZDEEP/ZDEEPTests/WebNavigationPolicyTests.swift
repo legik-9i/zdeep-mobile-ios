@@ -98,10 +98,22 @@ struct WebNavigationPolicyTests {
         ) == .cancel)
     }
 
-    @Test func test_rejected_user_link_does_not_fail_current_document() {
+    @Test func test_rejected_user_navigation_does_not_fail_current_document() {
+        #expect(WebNavigationPolicy.decide(
+            url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
+            navigationType: .formSubmitted, isMainFrame: true, hasTargetFrame: true, userInitiated: false
+        ) == .cancel)
         #expect(!WebNavigationPolicy.shouldFailDocumentNavigation(
             url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
             isMainFrame: true, navigationType: .linkActivated
+        ))
+        #expect(!WebNavigationPolicy.shouldFailDocumentNavigation(
+            url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
+            isMainFrame: true, navigationType: .formSubmitted
+        ))
+        #expect(!WebNavigationPolicy.shouldFailDocumentNavigation(
+            url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
+            isMainFrame: true, navigationType: .formResubmitted
         ))
         #expect(WebNavigationPolicy.shouldFailDocumentNavigation(
             url: URL(string: "https://outside.example/redirect")!, trustedURL: origin,
