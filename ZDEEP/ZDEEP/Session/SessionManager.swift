@@ -45,6 +45,17 @@ final class SessionManager: SessionManaging {
         }
     }
 
+    private enum AuthPlanKind {
+        case refresh
+        case retry
+    }
+
+    private struct AuthPlan {
+        let id: UUID
+        let kind: AuthPlanKind
+        let deadline: Duration
+    }
+
     private final class Operation {
         let id: UUID
         let request: Request
@@ -75,6 +86,12 @@ final class SessionManager: SessionManaging {
     private var publishedSession: AuthSession?
     private var lastExpiredAttemptId: UUID?
     private var storedLastError: AuthFailure?
+    private var authPlan: AuthPlan?
+    private var authPlanHandle: (any CancellationHandle)?
+    private var expiryHandle: (any CancellationHandle)?
+    private var expiryPlanId: UUID?
+    private var retryFailureCount = 0
+    private var entryAutoRefreshBlocked = false
 
     init(bindingStore: any BindingStoring, authClient: any AuthClientProtocol, clock: any SessionClock) {
         self.bindingStore = bindingStore
@@ -104,6 +121,10 @@ final class SessionManager: SessionManaging {
             let failure = contextFailure(stage: .pair, attemptId: UUID())
             throw RegistrationFailure(failure: failure, registeredBinding: storedRegisteredBinding)
         }
+        guard active || operation != nil else {
+            throw RegistrationFailure(failure: inactiveFailure(stage: .pair), registeredBinding: storedRegisteredBinding)
+        }
+        prepareUserInitiatedAttempt()
         return try await request(.register(binding, carToken))
     }
 
@@ -122,12 +143,15 @@ final class SessionManager: SessionManaging {
             return result
         }
 
+        guard active else { throw inactiveFailure(stage: .token) }
+
         if let binding, let current = storedRegisteredBinding, current.bindingId != binding.bindingId {
             throw contextFailure(stage: .token, attemptId: UUID())
         }
         guard let effectiveBinding = storedRegisteredBinding ?? binding else {
             throw unavailableFailure(attemptId: UUID())
         }
+        prepareUserInitiatedAttempt()
         storedRegisteredBinding = effectiveBinding
         return try await request(.update(effectiveBinding))
     }
@@ -140,11 +164,34 @@ final class SessionManager: SessionManaging {
         }
     }
 
-    func webViewDidBecomeVisible() { mode = .working }
+    func webViewDidBecomeVisible() {
+        let changedToWorking = mode != .working
+        mode = .working
+        entryAutoRefreshBlocked = false
+        if changedToWorking, operation == nil, authPlan == nil, retryFailureCount > 0,
+           storedRegisteredBinding != nil {
+            scheduleAuthPlan(
+                kind: .retry,
+                deadline: clock.now + SessionRefreshPolicy.retryDelay(failureCount: retryFailureCount)
+            )
+        }
+    }
 
-    func setActive(_ active: Bool) { self.active = active }
+    func setActive(_ active: Bool) {
+        guard self.active != active else { return }
+        self.active = active
+        if active {
+            handleForeground()
+        } else {
+            authPlanHandle?.cancel()
+            authPlanHandle = nil
+            cancelExpiryTimer()
+        }
+    }
 
     func stop() {
+        cancelAuthPlan()
+        cancelExpiryTimer()
         let previousOperation = operation
         let shouldEmitActivityFinished = previousOperation.map { !$0.didEmitActivityFinished } ?? false
         previousOperation?.didEmitActivityFinished = true
@@ -154,6 +201,8 @@ final class SessionManager: SessionManaging {
         publishedSession = nil
         lastExpiredAttemptId = nil
         storedLastError = nil
+        retryFailureCount = 0
+        entryAutoRefreshBlocked = false
         mode = .entry
         active = true
 
@@ -389,6 +438,141 @@ final class SessionManager: SessionManaging {
         completed.waiters.removeAll()
         operation = nil
         for waiter in waiters { waiter.resume(with: finalResult) }
+        switch finalResult {
+        case .success(let session):
+            retryFailureCount = 0
+            entryAutoRefreshBlocked = false
+            storedLastError = nil
+            scheduleExpiry(for: session)
+            scheduleAuthPlan(kind: .refresh, deadline: SessionRefreshPolicy.refreshDeadline(for: session))
+        case .failure(let error):
+            recordOperationFailure(error)
+        }
+    }
+
+    private func prepareUserInitiatedAttempt() {
+        cancelAuthPlan()
+        entryAutoRefreshBlocked = false
+    }
+
+    private func recordOperationFailure(_ error: Error) {
+        guard !(error is CancellationError) else { return }
+        guard let failure = error as? AuthFailure
+                ?? (error as? RegistrationFailure)?.failure else { return }
+        storedLastError = failure
+        retryFailureCount += 1
+        if mode == .working {
+            entryAutoRefreshBlocked = false
+            scheduleAuthPlan(
+                kind: .retry,
+                deadline: clock.now + SessionRefreshPolicy.retryDelay(failureCount: retryFailureCount)
+            )
+        } else {
+            entryAutoRefreshBlocked = true
+            cancelAuthPlan()
+        }
+    }
+
+    private func scheduleAuthPlan(kind: AuthPlanKind, deadline: Duration) {
+        cancelAuthPlan()
+        let plan = AuthPlan(id: UUID(), kind: kind, deadline: deadline)
+        authPlan = plan
+        activateAuthPlanIfPossible()
+    }
+
+    private func activateAuthPlanIfPossible() {
+        guard active, let plan = authPlan, authPlanHandle == nil else { return }
+        guard plan.deadline > clock.now else {
+            authPlan = nil
+            beginScheduledUpdate()
+            return
+        }
+
+        let handle = clock.schedule(at: plan.deadline) { [weak self] in
+            guard let self, self.authPlan?.id == plan.id else { return }
+            self.authPlanHandle = nil
+            guard self.active else { return }
+            self.authPlan = nil
+            self.beginScheduledUpdate()
+        }
+        if authPlan?.id == plan.id, active {
+            authPlanHandle = handle
+        } else {
+            handle.cancel()
+        }
+    }
+
+    private func cancelAuthPlan() {
+        authPlanHandle?.cancel()
+        authPlanHandle = nil
+        authPlan = nil
+    }
+
+    private func scheduleExpiry(for session: AuthSession) {
+        cancelExpiryTimer()
+        guard active else { return }
+        let planId = UUID()
+        expiryPlanId = planId
+        let handle = clock.schedule(at: session.deadline) { [weak self] in
+            guard let self, self.expiryPlanId == planId else { return }
+            self.expiryHandle = nil
+            guard self.publishedSession?.attemptId == session.attemptId else { return }
+            _ = self.currentSession
+        }
+        if expiryPlanId == planId, active, publishedSession?.attemptId == session.attemptId {
+            expiryHandle = handle
+        } else {
+            handle.cancel()
+        }
+    }
+
+    private func cancelExpiryTimer() {
+        expiryPlanId = nil
+        expiryHandle?.cancel()
+        expiryHandle = nil
+    }
+
+    private func beginScheduledUpdate() {
+        guard active, operation == nil, let binding = storedRegisteredBinding else { return }
+        guard mode == .working || !entryAutoRefreshBlocked else { return }
+        let newOperation = Operation(id: UUID(), request: .update(binding))
+        operation = newOperation
+        eventToken = newOperation.id
+        emit(.authorizationActivityChanged(true), whileTokenIs: newOperation.id)
+        guard operation?.id == newOperation.id else { return }
+        newOperation.task = Task { @MainActor [weak self] in
+            await self?.runOperation(newOperation.id)
+        }
+    }
+
+    private func handleForeground() {
+        let session = currentSession
+        guard active else { return }
+        if let session {
+            scheduleExpiry(for: session)
+        }
+        guard !(mode == .entry && entryAutoRefreshBlocked), operation == nil else { return }
+        if authPlan != nil {
+            activateAuthPlanIfPossible()
+            return
+        }
+        guard storedRegisteredBinding != nil else { return }
+        let refreshDeadline = session.map(SessionRefreshPolicy.refreshDeadline(for:)) ?? clock.now
+        if refreshDeadline <= clock.now {
+            beginScheduledUpdate()
+        } else {
+            scheduleAuthPlan(kind: .refresh, deadline: refreshDeadline)
+        }
+    }
+
+    private func inactiveFailure(stage: AuthStage) -> AuthFailure {
+        AuthFailure(
+            kind: .local,
+            stage: stage,
+            attemptId: UUID(),
+            message: "A new authorization attempt cannot start while the app is inactive.",
+            diagnosticCode: "INACTIVE"
+        )
     }
 
     private func removeWaiter(_ waiterId: UUID) {
