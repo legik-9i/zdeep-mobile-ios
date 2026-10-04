@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body>
+<script>
+window.__bridgeAtDocumentStart = typeof window.ZdeepNative === 'object'
+    && ['getSession', 'recoverUnauthorized', 'getHostState', 'reportReady']
+        .every(name => typeof window.ZdeepNative[name] === 'function');
+window.__bridgeSessionEvents = [];
+window.__bridgeHostEvents = [];
+window.addEventListener('zdeep:session-event', event => window.__bridgeSessionEvents.push(event.detail));
+window.addEventListener('zdeep:host-event', event => window.__bridgeHostEvents.push(event.detail));
+</script>
+</body></html>

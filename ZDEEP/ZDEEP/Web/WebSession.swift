@@ -39,6 +39,8 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         return documentContext?.isCurrentAndCommitted(currentDocument) == true
     }
 
+    var documentContextPhase: WebDocumentContext.Phase? { documentContext?.phase }
+
     override convenience init() {
         self.init(trustedURL: nil)
     }
@@ -235,6 +237,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         navigationError = message
         updateCurrentURL(webView.url)
         if let currentDocument {
+            bridge?.closeDocument(currentDocument)
             onEvent?(.documentFailed(currentDocument, AuthFailure(
                 kind: .network,
                 stage: .web,
@@ -279,6 +282,15 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         controller.removeAllUserScripts()
         Self.infrastructureScripts.forEach(controller.addUserScript)
         if let bridge { controller.addUserScript(bridge.bootstrap(documentId: identity.documentId)) }
+    }
+
+    func trusts(_ origin: WKSecurityOrigin) -> Bool {
+        guard let trustedURL,
+              let components = URLComponents(url: trustedURL, resolvingAgainstBaseURL: false),
+              origin.protocol == components.scheme,
+              origin.host == components.host else { return false }
+        let port = components.port ?? (components.scheme == "https" ? 443 : 80)
+        return origin.port == port
     }
 
     private func failCurrentDocument(_ message: String, status: Int? = nil) {

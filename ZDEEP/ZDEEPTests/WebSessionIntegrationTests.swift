@@ -109,6 +109,7 @@ struct WebSessionIntegrationTests {
             Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")
         )
         let session = WebSession(trustedURL: environment.endpoints.web)
+        _ = NativeBridge(session: session, manager: BridgeTestSessionManager()) { _, _ in }
         defer { session.close() }
         session.load(url: fixture)
         _ = try await session.waitForJavaScript(
@@ -118,6 +119,11 @@ struct WebSessionIntegrationTests {
         #expect(nativeType == .string("object"))
         #expect(session.currentDocument?.containerId == session.id)
         #expect(session.currentDocument?.documentId != nil)
+        let fileOriginResult = try await session.executeJavaScript(
+            "window.ZdeepNative.getSession().then(() => 'received').catch(() => 'rejected')",
+            timeout: .seconds(5)
+        )
+        #expect(fileOriginResult == .string("rejected"))
     }
 
     @Test func test_foreign_server_redirect_does_not_commit_document() async throws {
