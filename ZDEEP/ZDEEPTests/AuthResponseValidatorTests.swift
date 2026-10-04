@@ -43,7 +43,8 @@ struct AuthResponseValidatorTests {
                 Issue.record("Expected invalid response: \(name)")
             } catch let failure as AuthFailure {
                 #expect(failure.kind == .invalidResponse, "\(name)")
-                #expect(failure.diagnosticCode == "BAD_RESPONSE", "\(name)")
+                let expectedCode = name == "wrong response car" ? "CAR_IDENTITY_MISMATCH" : "BAD_RESPONSE"
+                #expect(failure.diagnosticCode == expectedCode, "\(name)")
                 #expect(failure.httpStatus == 200, "\(name)")
                 #expect(!failure.message.contains("signature"), "\(name)")
                 #expect(!failure.message.contains("accessToken"), "\(name)")
@@ -53,7 +54,7 @@ struct AuthResponseValidatorTests {
 
     @Test func test_pair_requires_response_car_to_match_car_token_context() throws {
         let data = try LocalAuthFixture.successBody(carId: "car-1")
-        #expect(throws: AuthFailure.self) {
+        do {
             try AuthResponseValidator.validate(
                 data,
                 stage: .pair,
@@ -63,6 +64,9 @@ struct AuthResponseValidatorTests {
                 sentAt: .zero,
                 receivedAt: .seconds(1)
             )
+            Issue.record("Expected identity mismatch")
+        } catch let failure as AuthFailure {
+            #expect(failure.diagnosticCode == "CAR_IDENTITY_MISMATCH")
         }
     }
 

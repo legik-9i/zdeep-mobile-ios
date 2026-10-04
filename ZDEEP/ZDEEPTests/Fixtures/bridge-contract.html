@@ -8,5 +8,8 @@ window.__bridgeSessionEvents = [];
 window.__bridgeHostEvents = [];
 window.addEventListener('zdeep:session-event', event => window.__bridgeSessionEvents.push(event.detail));
 window.addEventListener('zdeep:host-event', event => window.__bridgeHostEvents.push(event.detail));
+window.__foreignFrameReply = null;
+window.addEventListener('message', event => { if (event.data?.type === 'bridge-reply') window.__foreignFrameReply = event.data.code });
 </script>
+<iframe id="same-origin-frame" srcdoc="<!doctype html><html><body>same origin frame</body></html>"></iframe>
 </body></html>

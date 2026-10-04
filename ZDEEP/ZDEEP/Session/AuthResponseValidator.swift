@@ -35,10 +35,10 @@ nonisolated enum AuthResponseValidator {
                 throw invalidResponse(stage: stage, attemptId: attemptId)
             }
             if let expectedCarId, carId != expectedCarId {
-                throw invalidResponse(stage: stage, attemptId: attemptId)
+                throw identityMismatch(stage: stage, attemptId: attemptId)
             }
             if let expectedPairCarId, carId != expectedPairCarId {
-                throw invalidResponse(stage: stage, attemptId: attemptId)
+                throw identityMismatch(stage: stage, attemptId: attemptId)
             }
 
             let expiryFromJWT = jwtExpiry * 1_000
@@ -102,6 +102,17 @@ nonisolated enum AuthResponseValidator {
             message: "The authorization response was invalid.",
             httpStatus: 200,
             diagnosticCode: "BAD_RESPONSE"
+        )
+    }
+
+    private static func identityMismatch(stage: AuthStage, attemptId: UUID) -> AuthFailure {
+        AuthFailure(
+            kind: .invalidResponse,
+            stage: stage,
+            attemptId: attemptId,
+            message: "The authorization response did not match the selected vehicle.",
+            httpStatus: 200,
+            diagnosticCode: "CAR_IDENTITY_MISMATCH"
         )
     }
 

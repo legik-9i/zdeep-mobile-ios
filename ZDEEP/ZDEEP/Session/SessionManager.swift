@@ -15,6 +15,7 @@ nonisolated struct RegistrationFailure: Error {
 @MainActor
 protocol SessionManaging: AnyObject {
     var currentSession: AuthSession? { get }
+    var hasPublishedSession: Bool { get }
     var lastError: AuthFailure? { get }
     var registeredBinding: RegisteredBinding? { get }
     var isAuthorizationInFlight: Bool { get }
@@ -111,6 +112,8 @@ final class SessionManager: SessionManaging {
         }
         return session
     }
+
+    var hasPublishedSession: Bool { publishedSession != nil }
 
     var lastError: AuthFailure? { storedLastError }
     var registeredBinding: RegisteredBinding? { storedRegisteredBinding }

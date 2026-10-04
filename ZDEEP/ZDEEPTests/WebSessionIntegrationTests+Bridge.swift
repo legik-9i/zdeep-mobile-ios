@@ -117,6 +117,117 @@ extension WebSessionIntegrationTests {
             "expiresAt": .string("2030-01-01T00:00:00Z")
         ])])]))
     }
+
+    @Test func test_get_session_waiter_survives_activity_and_expired_session_rejects() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        let manager = BridgeTestSessionManager()
+        manager.currentSession = nil
+        manager.isAuthorizationInFlight = true
+        let session = WebSession(trustedURL: url)
+        _ = NativeBridge(session: session, manager: manager) { _, _ in }
+        defer { session.close() }
+        session.load(url: url)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+
+        _ = try await session.executeJavaScript("window.ZdeepNative.getSession().then(() => { window.__waiter = 'resolved' }).catch(() => { window.__waiter = 'rejected' }); true", timeout: .seconds(5))
+        manager.emit(.authorizationActivityChanged(true))
+        manager.currentSession = BridgeTestSessionManager.fixtureSession
+        manager.isAuthorizationInFlight = false
+        manager.emit(.sessionChanged(BridgeTestSessionManager.fixtureSession))
+        _ = try await session.waitForJavaScript("window.__waiter", equals: .string("resolved"), timeout: .seconds(5))
+
+        manager.currentSession = nil
+        manager.hasPublishedSession = true
+        manager.emit(.sessionExpired(nil))
+        let expired = try await session.executeJavaScript(
+            "window.ZdeepNative.getSession().then(() => 'resolved').catch(error => error.code)", timeout: .seconds(5)
+        )
+        #expect(expired == .string("SESSION_EXPIRED"))
+    }
+
+    @Test func test_recovery_after_expired_published_session_attempts_refresh_once() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        let manager = BridgeTestSessionManager()
+        manager.currentSession = nil
+        manager.hasPublishedSession = true
+        manager.updateFailure = BridgeTestSessionManager.failure(code: "NETWORK")
+        let session = WebSession(trustedURL: url)
+        _ = NativeBridge(session: session, manager: manager) { _, _ in }
+        defer { session.close() }
+        session.load(url: url)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+
+        let value = try await session.executeJavaScript("window.ZdeepNative.recoverUnauthorized()", timeout: .seconds(5))
+        guard case .object(let fields) = value else { Issue.record("Expected recovery DTO"); return }
+        #expect(fields["status"] == .string("unavailable"))
+        #expect(fields["reason"] == .string("expired"))
+        #expect(manager.updateCalls == 1)
+    }
+
+    @Test func test_recovery_classifies_only_car_identity_mismatch_as_terminal() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        let manager = BridgeTestSessionManager()
+        let session = WebSession(trustedURL: url)
+        _ = NativeBridge(session: session, manager: manager) { _, _ in }
+        defer { session.close() }
+        session.load(url: url)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+
+        manager.updateFailure = BridgeTestSessionManager.failure(code: "BAD_RESPONSE")
+        let malformed = try await session.executeJavaScript("window.ZdeepNative.recoverUnauthorized()", timeout: .seconds(5))
+        guard case .object(let malformedFields) = malformed else { Issue.record("Expected recovery DTO"); return }
+        #expect(malformedFields["status"] == .string("unavailable"))
+        #expect(malformedFields["reason"] == .string("temporary"))
+
+        manager.updateFailure = BridgeTestSessionManager.failure(code: "CAR_IDENTITY_MISMATCH")
+        let mismatch = try await session.executeJavaScript("window.ZdeepNative.recoverUnauthorized()", timeout: .seconds(5))
+        guard case .object(let mismatchFields) = mismatch else { Issue.record("Expected recovery DTO"); return }
+        #expect(mismatchFields["status"] == .string("terminal"))
+        #expect(mismatchFields["reason"] == .string("authorization"))
+        #expect(manager.updateCalls == 2)
+    }
+
+    @Test func test_document_replacement_cancels_session_waiter_and_frames_cannot_call_bridge() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        let foreignServer = try BridgeFixtureServer(html: #"<!doctype html><script>window.webkit.messageHandlers.zdeepNative.postMessage({documentId:'00000000-0000-0000-0000-000000000001',method:'getSession',params:null}).then(reply => parent.postMessage({type:'bridge-reply',code:reply.error.code}, '*'))</script>"#)
+        let foreignURL = try await foreignServer.start()
+        var foreignComponents = try #require(URLComponents(url: foreignURL, resolvingAgainstBaseURL: false))
+        foreignComponents.host = "127.0.0.1"
+        let foreignOriginURL = try #require(foreignComponents.url)
+        let manager = BridgeTestSessionManager()
+        manager.currentSession = nil
+        manager.isAuthorizationInFlight = true
+        let session = WebSession(trustedURL: url)
+        _ = NativeBridge(session: session, manager: manager) { _, _ in }
+        defer { session.close() }
+        session.load(url: url)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        #expect(try await session.executeJavaScript(
+            "typeof document.querySelector('#same-origin-frame').contentWindow.ZdeepNative", timeout: .seconds(5)
+        ) == .string("undefined"))
+        _ = try await session.executeJavaScript(
+            "const frame=document.querySelector('#same-origin-frame').contentWindow; frame.webkit.messageHandlers.zdeepNative.postMessage({documentId:'00000000-0000-0000-0000-000000000001',method:'getSession',params:null}).then(reply => window.__frameReply=reply.error.code); true",
+            timeout: .seconds(5)
+        )
+        _ = try await session.waitForJavaScript("window.__frameReply", equals: .string("BRIDGE_INVALID_REQUEST"), timeout: .seconds(5))
+        _ = try await session.executeJavaScript("const frame=document.createElement('iframe'); frame.src='\(foreignOriginURL.absoluteString)'; document.body.appendChild(frame); true", timeout: .seconds(5))
+        _ = try await session.waitForJavaScript("window.__foreignFrameReply", equals: .string("BRIDGE_INVALID_REQUEST"), timeout: .seconds(5))
+
+        _ = try await session.executeJavaScript(
+            "window.ZdeepNative.getSession().then(() => { window.__oldWaiter = 'resolved' }).catch(() => { window.__oldWaiter = 'cancelled' }); true",
+            timeout: .seconds(5)
+        )
+        #expect(manager.subscriberCount == 2)
+        session.reload()
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        for _ in 0..<50 where manager.subscriberCount != 1 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(manager.subscriberCount == 1)
+        #expect(try await session.executeJavaScript("typeof window.__oldWaiter", timeout: .seconds(5)) == .string("undefined"))
+    }
 }
 
 @MainActor
@@ -132,14 +243,21 @@ final class BridgeTestSessionManager: SessionManaging {
             attemptId: UUID())
     }
     var currentSession: AuthSession? = fixtureSession
+    var hasPublishedSession = false
+    var updateFailure: AuthFailure?
     private(set) var updateCalls = 0
     var lastError: AuthFailure?
     var registeredBinding: RegisteredBinding?
     var isAuthorizationInFlight = false
     private var callbacks: [UUID: @MainActor (SessionManagerEvent) -> Void] = [:]
+    var subscriberCount: Int { callbacks.count }
 
     func register(binding: PendingBinding, carToken: String) async throws -> AuthSession { throw TestError.unused }
-    func updateSession(binding: RegisteredBinding?) async throws -> AuthSession { updateCalls += 1; throw TestError.unused }
+    func updateSession(binding: RegisteredBinding?) async throws -> AuthSession {
+        updateCalls += 1
+        if let updateFailure { throw updateFailure }
+        throw TestError.unused
+    }
     func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle {
         let id = UUID()
         callbacks[id] = observer
@@ -149,6 +267,10 @@ final class BridgeTestSessionManager: SessionManaging {
     func setActive(_ active: Bool) {}
     func stop() {}
     func emit(_ event: SessionManagerEvent) { for callback in callbacks.values { callback(event) } }
+
+    static func failure(code: String) -> AuthFailure {
+        AuthFailure(kind: .network, stage: .token, attemptId: UUID(), message: "Temporary fixture failure", diagnosticCode: code)
+    }
 
     private enum TestError: Error { case unused }
 }
@@ -171,6 +293,8 @@ private final class BridgeFixtureServer {
         ) else { throw FixtureError.missing }
         body = try Data(contentsOf: fixture)
     }
+
+    init(html: String) throws { body = Data(html.utf8) }
 
     func start() async throws -> URL {
         let body = body
