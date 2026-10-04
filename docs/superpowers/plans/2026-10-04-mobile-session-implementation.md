@@ -21,10 +21,12 @@
 
 Статус: план подготовлен для проверки пользователем. Код и зависимости этим документом не изменены; выполнение начинается после принятия плана.
 
+Ревью Sol от 2026-10-04: пять замечаний исправлены — local-only UI, своевременная адаптация старых тестов, пассивный hosted test root, сериализация shared WebKit storage и background execution для любой общей auth-операции. Повторное ревью подтвердило закрытие замечаний; новых противоречий в исправлениях не обнаружено. Физический iPhone исключён из обязательной приёмки по уточнению пользователя.
+
 ## Общие ограничения
 
 - Все сетевые проверки — только `local`: web `http://localhost:4005`, API `http://localhost:4002`. Никаких прогонов в `test`/`prod`.
-- Все автоматические проверки и доступные сквозные сценарии сначала на Simulator; iPhone — только после готовности реализации и успешного полного прогона.
+- Полное завершение задачи и приёмка не требуют физического iPhone. Все обязательные проверки выполняются на Simulator с `local`, включая реальный WKWebView и локальный backend; камера и события жизненного цикла проверяются заменяемыми адаптерами.
 - Готовая конфигурация окружений используется как зависимость. API URL и web URL никогда не берутся из QR.
 - Регистрация: одна попытка `pair`; завершение только после проверенного JWT и сохранения `registered`. Ошибка незавершённой регистрации требует очистки перед новым QR.
 - Хранилище имеет состояния `pending`, `registered`, `resetting`; отсутствие записи отдельно. JWT, QR-токен и поправка часов только в памяти.
@@ -145,6 +147,7 @@ enum SessionManagerEvent {
     case sessionChanged(AuthSession)
     case sessionExpired(AuthFailure?)
     case entryFailed(AuthFailure)
+    case authorizationActivityChanged(Bool) // только native, не событие JS
 }
 struct RegistrationFailure: Error {
     let failure: AuthFailure
@@ -154,6 +157,7 @@ struct RegistrationFailure: Error {
     var currentSession: AuthSession? { get } // только действующий JWT
     var lastError: AuthFailure? { get }
     var registeredBinding: RegisteredBinding? { get }
+    var isAuthorizationInFlight: Bool { get }
     func register(binding: PendingBinding, carToken: String) async throws -> AuthSession
     func updateSession(binding: RegisteredBinding?) async throws -> AuthSession
     func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void)
@@ -164,7 +168,7 @@ struct RegistrationFailure: Error {
 }
 ```
 
-Первый вход вызывает `updateSession(binding: restored)`, остальные — `updateSession(binding: nil)`. Ошибка отмены — `CancellationError`; `RegistrationFailure` сообщает только неудачу регистрации/публикации и сохранённый публичный контекст. Список callback-подписчиков местный. Перед callback повторно проверять актуальность публикации: подписчик может синхронно вызвать stop. Другой bindingId без stop отклоняется локальной ошибкой.
+Первый вход вызывает `updateSession(binding: restored)`, остальные — `updateSession(binding: nil)`. Ошибка отмены — `CancellationError`; `RegistrationFailure` сообщает только неудачу регистрации/публикации и сохранённый публичный контекст. Список callback-подписчиков местный. isAuthorizationInFlight отражает общую manager-owned операцию; authorizationActivityChanged отправляется один раз при её начале/завершении/stop, независимо от инициатора и количества потребителей. NativeBridge не сериализует этот внутренний сигнал в JS. Перед callback повторно проверять актуальность публикации: подписчик может синхронно вызвать stop. Другой bindingId без stop отклоняется локальной ошибкой.
 
 ### WebSession/bridge — задачи 6–7
 
@@ -211,9 +215,13 @@ python3 scripts/zdeep.py test --environment local --suite all --simulator <UDID>
 
 Сборка Swift входит в команды тестов; при изменениях исходников не использовать `--skip-build`. Для точечного повтора брать настоящий nodeIdentifier из завершённого `.xcresult`, а не угадывать его. Успех — exit 0 и читаемый новый result bundle с ненулевым количеством ожидаемых тестов.
 
-CLI сейчас относит к integration только `WebSessionIntegrationTests`. Новые реальные WebKit/API-проверки размещать как extensions **этого** suite в отдельных файлах; чистые unit не должны обращаться к сети. Не расширять классификатор CLI ради новых имён suite.
+CLI сейчас относит к integration только `WebSessionIntegrationTests`. Перед первым integration-прогоном задачи 2 пометить этот suite `@Suite(.serialized)`: все его extensions используют тот же последовательный suite и shared-default WebKit store. Unit-тесты cleaner используют fake WebKit adapter, не WKWebsiteDataStore.default. Новые реальные WebKit/API-проверки размещать как extensions **этого** suite в отдельных файлах; чистые unit не должны обращаться к сети. Не расширять классификатор CLI ради новых имён suite.
 
 До исполнения использовать `using-git-worktrees` для изолированной ветки. Соседние backend/web/agent checkout остаются источниками референсов, изменения в них не входят в этот план.
+
+До первого UI-прогона задачи 8 адаптировать `ZDEEP/ZDEEPUITests/ZDEEPUITests.swift::testTestEnvironmentWelcomeScreenDoesNotLoadWebUntilOpened`: заменить сетевой сценарий на local и убрать выбор `--environment test`. Проверки констант/сохранения shared scope test/prod остаются в EnvironmentTests с fake dependencies. Проверить все UI launchArguments/launchEnvironment: `--environment local` обязателен даже для performance launch; CLI environment не переопределяет аргумент приложения. Ни один UI-тест не открывает remote test/prod web.
+
+До изменения автоматического старта в задаче 9 добавить пассивный hosted-test режим. CLI выставляет `ZDEEP_PASSIVE_TEST_HOST=1` только target `ZDEEPTests` в копии `.xctestrun` по имени TestBundlePath, не target `ZDEEPUITests`. В DEBUG + Simulator root приложения в этом режиме не создаёт production coordinator и не начинает restore/web/auth; tests явно создают свои компоненты. Режим не действует в обычном запуске/Release. Для `all` hosted suite пассивен, а UI launch композиция нормальная либо явно выбранная UI fixture. Не использовать один глобальный флаг для всех targets.
 
 В каждой задаче: падающий тест → минимальная реализация → успешный соответствующий набор → ревью и исправления → коммит только файлов задачи. Если тест падает из-за окружения/preflight, он ещё не является красным тестом поведения. Общие test doubles растут только по фактической необходимости текущей задачи.
 
@@ -245,7 +253,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 ### Задача 2. Одна подписанная HTTP-попытка и проверка ответа
 
-**Файлы:** создать пять Session-файлов времени/API из таблицы; `AuthClientTests.swift`, `AuthResponseValidatorTests.swift`, `Support/LocalAuthFixture.swift`, `WebSessionIntegrationTests+LocalAuth.swift` в `ZDEEP/ZDEEPTests`.
+**Файлы:** создать пять Session-файлов времени/API из таблицы; изменить `ZDEEP/ZDEEPTests/WebSessionIntegrationTests.swift` для `@Suite(.serialized)`; `AuthClientTests.swift`, `AuthResponseValidatorTests.swift`, `Support/LocalAuthFixture.swift`, `WebSessionIntegrationTests+LocalAuth.swift` в `ZDEEP/ZDEEPTests`.
 
 **Интерфейсы:** потребляет BindingStoring; производит AuthClientProtocol/AuthSession/AuthFailure/SessionClock. `AuthHTTPTransport.send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)`, `cancelCurrentRequest()`; состояние транспорта на MainActor, URLSession delegate запрещает redirects.
 
@@ -277,6 +285,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Написать `test_pair_publishes_only_after_registered_save`, `test_save_failure_has_no_published_jwt`, `test_expiry_during_save_preserves_registered_context`: управлять моментом завершения store; последний тест возвращает RegistrationFailure с RegisteredBinding и currentSession=nil.
 - [ ] Написать `test_concurrent_consumers_share_one_attempt`, `test_update_joins_pair`, `test_cancelled_consumer_does_not_cancel_shared_auth`: два потребителя получают один результат, отменённый — CancellationError, общий клиент/счётчик вызывается один раз. Зарегистрированный контекст иной привязки отклоняется.
+- [ ] Написать `test_auth_activity_covers_register_manual_scheduled_and_bridge_attempts`: isAuthorizationInFlight=true пока общая Task не закончена, один true/false event на операцию, join не создаёт событий, stop завершает состояние.
 - [ ] Написать `test_stop_during_registered_save_prevents_late_publication`, `test_stop_invalidates_client_before_network_cancellation`, `test_reentrant_subscriber_stop_blocks_later_delivery`: событие старой операции не доставляется и не оживляет менеджер после stop.
 - [ ] Написать `test_identical_jwt_keeps_original_deadline_and_reports_bad_response`: также сравнить с последним истёкшим JWT; нет sessionChanged/нового дедлайна. После stop первая публикация такой же строки допустима.
 - [ ] Запустить unit, подтвердить падения; реализовать один MainActor manager-owned Task, UUID операции и словарь continuation потребителей. Перед добавлением waiter проверить Task cancellation, чтобы отмена до регистрации continuation не оставила вечное ожидание; добавить этот case в тест независимой отмены. Отмена потребителя удаляет только его continuation; общий Task отменяет только stop. Отмена из nonisolated cancellation handler передаёт удаление на MainActor; завершение каждого waiter защищено удалением из словаря.
@@ -387,10 +396,11 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 ### Задача 8. Логотип, загрузка и экран ошибки
 
-**Файлы:** изменить `ZDEEP/ZDEEP/ZDEEPApp.swift`; создать Presentation-файлы кроме FirstFrameProbe и debug-only `Debug/SessionUITestFixture.swift`; assets `StartupLogo.imageset`, `NativeBackground.colorset`, `LaunchScreen.storyboard`; заполнить AppIcon.appiconset; изменить Info.plist/проект; `NativePresentationTests.swift`, `ZDEEPUITests/NativePresentationUITests.swift`; сохранить источник error HTML в `docs/design/assets/native-error/`.
+**Файлы:** изменить `ZDEEP/ZDEEP/ZDEEPApp.swift` и `ZDEEP/ZDEEPUITests/ZDEEPUITests.swift` для local-only launch; создать Presentation-файлы кроме FirstFrameProbe и debug-only `Debug/SessionUITestFixture.swift`; assets `StartupLogo.imageset`, `NativeBackground.colorset`, `LaunchScreen.storyboard`; заполнить AppIcon.appiconset; изменить Info.plist/проект; `NativePresentationTests.swift`, `ZDEEPUITests/NativePresentationUITests.swift`; сохранить источник error HTML в `docs/design/assets/native-error/`.
 
 **Интерфейсы:** `StartupLogoView()`, `NativeLoadingView(canCancel:onCancel:)`, `NativeErrorView(presentation:onRetry:onStartOver:onRebind:)`, `CameraPermissionView(status:onSettings:onBack:)`; представления не выполняют auth/reset. Создать NativeErrorPresentation/RetryContext в AppState.swift по контракту координатора; вычисление действий зависит от enum.
 
+- [ ] До любого UI-прогона выполнить local-only адаптацию существующего test-environment UI-сценария из раздела проверок. Сохранить проверку welcome, но не открывать внешний контур; константы test/prod проверять только unit.
 - [ ] Получить актуальный Stitch error screen `projects/1417382377358815087/screens/411b28d9024448b7a36d813cbf00b56c`, сохранить HTML и метаданные источника. Следовать ios-stitch-implementation; если текущая тема конфликтует с согласованным фоном приложения — уточнить конкретные значения перед переносом. Кнопки использовать из существующего WelcomeStyle, не придумывать новую тему. Временная загрузка — только «Загрузка» и разрешённая отмена.
 - [ ] Написать table-тесты действий: первичная ошибка → StartOver; storage restore → Retry/Reset; registered auth/web → Retry/Rebind; cleanup → Retry. Коды NETWORK/TIMEOUT/HTTP_403/BAD_RESPONSE/KEYCHAIN/SIGNATURE помещаются в 15 символов; attempt UUID отображается первыми 8 hex-символами без дефисов. Версия из CFBundleShortVersionString/CFBundleVersion.
 - [ ] Написать UI-тесты видимости/доступности кнопок, длинного неизвестного serverCode/русского текста, Dynamic Type и подтверждения с текстом «Привязка на этом телефоне будет удалена. Для входа потребуется снова отсканировать QR-код машины». Denied → Settings/Back, restricted → объяснение/Back; notDetermined сначала системный prompt задачи 10.
@@ -410,10 +420,11 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 ### Задача 9. Старт координатора и отложенная подготовка веба
 
-**Файлы:** изменить AppCoordinator, ContentView, ZDEEPApp, WelcomeView; создать Presentation/FirstFrameProbe.swift и Session/BackgroundExecution.swift; расширить AppState; расширить CoordinatorTests и native UI tests.
+**Файлы:** изменить AppCoordinator, ContentView, ZDEEPApp, WelcomeView; создать App/AppRootView.swift, Presentation/FirstFrameProbe.swift и Session/BackgroundExecution.swift; изменить `scripts/zdeep_tools/build.py`, `scripts/tests/test_build.py`; расширить AppState; расширить CoordinatorTests, `ZDEEP/ZDEEPUITests/ZDEEPUITests.swift`, `DebugPanelUITests.swift`, `DiagnosticMailboxUITests.swift`, `DiagnosticMailboxLaunchTests.swift` и `ZDEEP/ZDEEPTests/WebSessionIntegrationTests.swift` по зависимостям старого открытия.
 
 **Интерфейсы:** потребляет BindingStoring/SessionManaging/фабрику WebSession/экраны. `AppCoordinator.init` получает эти зависимости с production defaults; `start()` вызывается один раз из app lifecycle. WelcomeView принимает `onScan: () -> Void`, его вёрстка сохраняется.
 
+- [ ] Перед wiring start написать Python-тесты `test_passive_host_flag_is_scoped_to_hosted_target` для обоих xctestrun layouts и `all`: ZDEEPTests получает флаг, ZDEEPUITests нет, существующие EnvironmentVariables сохраняются. Добавить app-entry тест отсутствия production factory/marker/HTTP при passive flag. Убедиться в ожидаемых падениях, реализовать flag в `_configure_xctestrun` по TestBundlePath ending `/ZDEEPTests.xctest` (также basename без slash). В ZDEEPApp выбрать passive/UI fixture/production branch **до создания** AppCoordinator; AppRootView владеет StateObject только в production branch. Пустая root test-host view не вызывает ContentView.start/first-frame. Запустить Python suite.
 - [ ] Написать `test_none_restores_to_welcome`, `test_registered_starts_one_token_without_welcome_flash`, `test_restore_error_starts_no_webview`, `test_web_factory_waits_for_native_frame`: startup logo → результат restore; factory не вызывается до уведомления UI; JWT attempt стартует независимо.
 - [ ] Написать `test_stale_frame_callback_does_not_create_container`, `test_background_defers_web_creation`: уведомление связано с UUID сценария, подготовка ровно один раз после активности/актуального frame.
 
@@ -427,9 +438,10 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit, подтвердить падения; реализовать start/restore и state. Создавать контейнер на актуальное уведомление, подключать bridge и diagnostics перед load. В этой задаче подключить onReady к acceptWebReady и реализовать базовую проверку актуального документа/registered context/действующего JWT, сохранение принятой готовности и reveal только при active. Рабочий режим включается только после фактического показа; таймер и расширенные сценарии добавляет задача 11. Отдельный подготовленный WebView находится под непрозрачным native view в одном ZStack, disabled/hitTesting false и accessibilityHidden до показа. Reveal использует тот же instance без reload.
 - [ ] Реализовать FirstFrameProbe как малый UIViewRepresentable: после didMoveToWindow запустить одноразовый CADisplayLink, уведомить на втором tick (между ними прошёл rendering cycle первого кадра), invalidate при detach/смене scenarioId. Не использовать onAppear как доказательство отображения, DispatchQueue delay или фиксированные миллисекунды. Координатор дополнительно проверяет active/scenario; probe не создаёт WKWebView.
-- [ ] Подключить BackgroundExecution к координатору: beginBackgroundTask только когда уже начатая его auth-задача уходит в фон; end ровно один раз при completion/foreground/expiration. Expiration завершает право на background execution, не запускает retry и не обещает работу при suspension; проверка HTTP deadline при возобновлении остаётся у клиента. Добавить fake-adapter тесты balanced begin/end и отсутствия background-series, без BGTaskScheduler.
+- [ ] Подключить BackgroundExecution к координатору по manager.isAuthorizationInFlight и authorizationActivityChanged: beginBackgroundTask при уходе в фон с **любой** уже начатой общей auth-операцией (register, scheduled/manual refresh, bridge recover); наличие Task координатора не требуется. end ровно один раз при завершении общей операции/stop/foreground/expiration. После expiration повторно entitlement для той же непрерывной background-фазы не запрашивать; сбросить этот запрет при foreground. Expiration завершает право на background execution, не запускает retry и не обещает работу при suspension; проверка HTTP deadline при возобновлении остаётся у клиента. Добавить fake-adapter тесты balanced begin/end для scheduled refresh и recover без Task координатора, expiration и отсутствия background-series, без BGTaskScheduler.
 - [ ] Удалить техническую URL/navigation-error строку из обычного ContentView; debug сведения остаются в панели. ScenePhase передаёт setActive менеджеру/bridge/coordinator. Legacy openWebView перестаёт обходить auth, диагностический флаг не раскрывает бизнесовый веб.
-- [ ] Добавить UI startup/welcome/loading тесты; проверить first reveal с тем же id контейнера через unit. Запустить unit/ui local, PASS; коммит `feat: connect staged startup and web preparation`.
+- [ ] В этой же задаче адаптировать прежние open/close/lazy WebView ожидания, а не откладывать до12: CoordinatorTests используют fake manager/store и prepared-vs-visible состояние; ZDEEPUITests/DebugPanelUITests/DiagnosticMailboxUITests работают с hidden prepared local WebView, диагностические open flags не раскрывают его. DebugPanelTestActions ожидает подготовленный контейнер вместо auth bypass. Сохранить тесты JS/late replies/mailbox, сменив только способ получения доступного документа. `WebSessionIntegrationTests.test_full_reset_clears_web_cookie_and_local_storage` создаёт WebSession напрямую для записи cookie/storage, закрывает его до reset и создаёт новый напрямую для чтения; не использует coordinator.openWebView. Полный набор после9 не содержит ожиданий прежнего bypass.
+- [ ] Добавить UI startup/welcome/loading тесты; проверить first reveal с тем же id контейнера через unit. Запустить unit/integration/ui local и `python3 -m unittest discover -s scripts/tests`, PASS; коммит `feat: connect staged startup and web preparation`.
 
 ### Задача 10. Камера, регистрация, отмена и перепривязка
 
@@ -494,7 +506,7 @@ guard case .welcome = coordinator.screen else {
 - [ ] Написать diagnostics-тесты: подготовленный hidden WebView доступен mailbox, diagnostics-ready не раскрывает веб, reset закрывает mailbox до удалений; Release не экспортирует debug executor. sessionStateRevision остаётся диагностическим счётчиком, не JWT/protocol version.
 - [ ] Запустить unit/ui, подтвердить падения; перечислить app-owned Keychain services/accounts явно, удалить все принадлежащие приложению записи (не только декодируемый binding), app-owned Application Support/Caches/Documents файлы, defaults domain, WKWebsiteDataStore.allWebsiteDataTypes. Для WebKit после completion проверить оставшиеся records; сохранять ошибки других категорий. Удаление файлов выполнять после остановки mailbox/tasks, включая diagnostic-events.jsonl, handshake/mailbox файлы и app-owned временные файлы. До успеха удаления не записывать новые диагностические файлы в очищаемые каталоги; после завершения можно начать новый журнал. Не удалять bundle или sandbox чужих приложений.
 - [ ] Подключить повтор полного reset и environment-switch с контекстом этапа; target применяется только после успешной необходимой очистки. После успеха start-path logo/restore/first-frame. Обычный cancel/rebind сохраняет install marker и web cache.
-- [ ] Адаптировать прежние UI-тесты open/close WebView под новые бизнесовые ограничения; mailbox tests могут работать с подготовленным hidden документом, но не открывать его без auth/ready. Сохранить существующие EnvironmentTests/DiagnosticExecutorTests.
+- [ ] Дополнить уже адаптированные в9 UI/integration-тесты полным очистителем; не возвращать debug auth bypass. Сохранить существующие EnvironmentTests/DiagnosticExecutorTests. Unit cleaner получает fake adapter, реальный persistent WebKit reset проверяется только сериализованным integration suite.
 
 Контрольные assertions для описанных выше фикстур:
 
@@ -528,11 +540,13 @@ guard case .welcome = coordinator.screen else {
 - [ ] Сохранить отчёт: команды, commit, local endpoints, Simulator UDID/runtime, paths к результатам, новые сценарии, итоговые количества, ограничения. Не писать «камера/реальный фон проверены» по результатам симуляции; приложить screenshot нативной ошибки/логотипа и зафиксировать замечания визуальной приёмки.
 - [ ] Выполнить итоговое ревью всей ветки по восьми спецификациям и этому плану; исправления повторно проверять затронутым набором, затем all перед передачей. Коммит `test: verify mobile session on local simulator`.
 
-## Физический iPhone после симулятора
+## Завершение без физического устройства
 
-Этот этап начинается только после готовности реализации, успешной задачи 13 и согласования пользователем времени использования телефона. Сейчас он не блокирует начало разработки.
+Задача полностью завершена после реализации, исправления результатов итогового ревью и успешных обязательных проверок задачи 13 на Simulator с `local`. Доступ к iPhone пользователя, настройка local-сети для телефона и доработка device-команд не входят в этот план и не являются условиями завершения.
 
-Текущие device-команды инфраструктуры ограничены `test`; нельзя использовать их для обхода правила local. До физического этапа отдельно подготовить доступ iPhone к **этому же local стенду**, адрес Mac в локальной сети, конфигурацию/разрешения iOS и local-only поддержку диагностики, если понадобится. Не менять test/prod URL. Затем проверить реальное сканирование, denied/restricted/Settings, блокировку/фон и завершение in-flight по ограничениям iOS, реальный WebKit/cache. Результаты записать отдельно от Simulator.
+На Simulator камера подменяется результатом сканирования; permission, Settings-return, foreground/background, истечение background entitlement и приостановка моделируются управляемыми адаптерами. Настоящие URLSession, Security/CryptoKit и WKWebView проверяются на Simulator, подпись и привязка — на реальном local backend.
+
+Отчёт честно отделяет эти проверки от проверки оптики камеры, hardware-specific WebKit поведения и фактического решения iOS о времени работы в фоне на физическом устройстве. Эти ограничения не блокируют завершение. Дополнительная проверка на устройстве возможна только как отдельная будущая задача по желанию пользователя.
 
 ## Самопроверка плана
 
