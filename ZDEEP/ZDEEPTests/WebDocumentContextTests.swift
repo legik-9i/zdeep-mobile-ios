@@ -37,6 +37,20 @@ struct WebDocumentContextTests {
         #expect(context.currentIdentity == nil)
     }
 
+    @Test func test_late_commit_after_failed_or_closed_preparation_cannot_open_document() {
+        let context = WebDocumentContext(containerId: UUID(), trustedURL: URL(string: "https://app.example")!)
+        let identity = context.prepare(url: URL(string: "https://app.example/start")!, reason: .initial)
+        let navigationId = ObjectIdentifier(NavigationToken())
+        context.bindNavigation(navigationId, to: identity)
+        context.fail(identity)
+        #expect(!context.commit(identity))
+        #expect(!context.isCurrentAndCommitted(identity))
+        context.close()
+        #expect(context.identity(for: navigationId) == nil)
+        #expect(!context.commit(identity))
+        #expect(context.phase == .closed)
+    }
+
     @Test func test_new_document_has_new_identity_and_preparing_revokes_committed_document() {
         let context = WebDocumentContext(containerId: UUID(), trustedURL: URL(string: "https://app.example")!)
         let first = context.prepare(url: URL(string: "https://app.example/start")!, reason: .initial)

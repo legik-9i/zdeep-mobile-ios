@@ -185,7 +185,7 @@ final class NativeBridge: NSObject, WebDocumentBridgeHandling, WKScriptMessageHa
     private func getSession() async throws -> AuthSession {
         if let current = manager.currentSession { return current }
         if let failure = manager.lastError, !manager.isAuthorizationInFlight { throw failure }
-        if manager.hasPublishedSession, !manager.isAuthorizationInFlight {
+        if manager.hasPublishedSession {
             throw BridgeOperationError(message: "Session expired", code: "SESSION_EXPIRED")
         }
         let waiterId = UUID()
@@ -211,8 +211,7 @@ final class NativeBridge: NSObject, WebDocumentBridgeHandling, WKScriptMessageHa
                    !manager.isAuthorizationInFlight {
                     waiters.removeValue(forKey: waiterId)?.subscription.cancel()
                     continuation.resume(throwing: failure)
-                } else if manager.hasPublishedSession, manager.currentSession == nil,
-                          !manager.isAuthorizationInFlight {
+                } else if manager.hasPublishedSession, manager.currentSession == nil {
                     waiters.removeValue(forKey: waiterId)?.subscription.cancel()
                     continuation.resume(throwing: BridgeOperationError(message: "Session expired", code: "SESSION_EXPIRED"))
                 }
