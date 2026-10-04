@@ -38,8 +38,10 @@ struct SessionManagerTests {
         client.enqueuePair(.success(session()))
         let manager = SessionManager(bindingStore: store, authClient: client, clock: TestSessionClock())
         var published = 0
+        var reportedStorageFailure = false
         let subscription = manager.subscribe { event in
             if case .sessionChanged = event { published += 1 }
+            if case .entryFailed(let failure) = event, failure.stage == .storage { reportedStorageFailure = true }
         }
         defer { subscription.cancel() }
 
@@ -52,6 +54,7 @@ struct SessionManagerTests {
         }
         #expect(manager.currentSession == nil)
         #expect(published == 0)
+        #expect(reportedStorageFailure)
     }
 
     @Test func test_expiry_during_save_preserves_registered_context() async throws {
@@ -171,6 +174,54 @@ struct SessionManagerTests {
         #expect(activity == [true, false])
     }
 
+    @Test func test_stop_from_activity_finished_event_cancels_all_consumers() async throws {
+        let (store, pending, _) = try await makePendingStore()
+        let client = ControlledManagerAuthClient(suspendNextPair: true)
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: TestSessionClock())
+        let subscription = manager.subscribe { event in
+            if case .authorizationActivityChanged(false) = event { manager.stop() }
+        }
+        defer { subscription.cancel() }
+
+        let first = Task { try await manager.register(binding: pending, carToken: "car-token") }
+        await waitForPair(client)
+        let second = Task { try await manager.register(binding: pending, carToken: "car-token") }
+        await Task.yield()
+        client.resumePair(.success(session()))
+
+        for consumer in [first, second] {
+            do {
+                _ = try await consumer.value
+                Issue.record("stop from the finished event must cancel every consumer")
+            } catch is CancellationError {}
+        }
+        #expect(manager.currentSession == nil)
+    }
+
+    @Test func test_session_changed_cancellation_only_cancels_that_consumer() async throws {
+        let (store, pending, _) = try await makePendingStore()
+        let client = ControlledManagerAuthClient(suspendNextPair: true)
+        let expected = session()
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: TestSessionClock())
+        var first: Task<AuthSession, Error>?
+        let subscription = manager.subscribe { event in
+            if case .sessionChanged = event { first?.cancel() }
+        }
+        defer { subscription.cancel() }
+
+        first = Task { try await manager.register(binding: pending, carToken: "car-token") }
+        await waitForPair(client)
+        let second = Task { try await manager.register(binding: pending, carToken: "car-token") }
+        await Task.yield()
+        client.resumePair(.success(expected))
+
+        do {
+            _ = try await first?.value
+            Issue.record("Cancellation from sessionChanged must be observed by the cancelled consumer")
+        } catch is CancellationError {}
+        #expect(try await second.value == expected)
+    }
+
     @Test func test_stop_during_registered_save_prevents_late_publication() async throws {
         let (store, pending, storage) = try await makePendingStore()
         storage.pauseNextWrite()
@@ -251,6 +302,80 @@ struct SessionManagerTests {
         }
         #expect(manager.currentSession == first)
         #expect(client.tokenCalls == 1)
+    }
+
+    @Test func test_identical_jwt_after_expiration_reports_bad_response() async throws {
+        let (store, pending, _) = try await makePendingStore()
+        let clock = TestSessionClock()
+        let client = ControlledManagerAuthClient()
+        let first = session(token: "same-jwt", deadline: .seconds(5))
+        client.enqueuePair(.success(first))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: clock)
+        _ = try await manager.register(binding: pending, carToken: "car-token")
+        clock.advance(by: .seconds(5))
+        #expect(manager.currentSession == nil)
+        client.enqueueToken(.success(session(token: "same-jwt", deadline: .seconds(1_800))))
+
+        do {
+            _ = try await manager.updateSession(binding: nil)
+            Issue.record("An expired session's token must still be rejected if repeated")
+        } catch let failure as AuthFailure {
+            #expect(failure.diagnosticCode == "BAD_RESPONSE")
+        }
+        #expect(manager.currentSession == nil)
+    }
+
+    @Test func test_same_jwt_can_be_published_after_stop() async throws {
+        let (store, pending, _) = try await makePendingStore()
+        let client = ControlledManagerAuthClient()
+        let first = session(token: "same-jwt")
+        client.enqueuePair(.success(first))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: TestSessionClock())
+        _ = try await manager.register(binding: pending, carToken: "car-token")
+        manager.stop()
+        let afterStop = session(token: "same-jwt", deadline: .seconds(1_800))
+        client.enqueuePair(.success(afterStop))
+
+        #expect(try await manager.register(binding: pending, carToken: "car-token") == afterStop)
+        #expect(manager.currentSession == afterStop)
+        #expect(client.pairCalls == 2)
+    }
+
+    @Test func test_session_expiring_during_session_changed_is_not_returned() async throws {
+        let (store, pending, _) = try await makePendingStore()
+        let clock = TestSessionClock()
+        let client = ControlledManagerAuthClient()
+        let expected = session(deadline: .seconds(5))
+        client.enqueuePair(.success(expected))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: clock)
+        let subscription = manager.subscribe { event in
+            if case .sessionChanged = event { clock.advance(by: .seconds(5)) }
+        }
+        defer { subscription.cancel() }
+
+        do {
+            _ = try await manager.register(binding: pending, carToken: "car-token")
+            Issue.record("A session expired during callback delivery must not be returned")
+        } catch let failure as RegistrationFailure {
+            #expect(failure.failure.stage == .publication)
+            #expect(failure.registeredBinding?.bindingId == pending.bindingId)
+        }
+        #expect(manager.currentSession == nil)
+    }
+
+    @Test func test_register_rejects_different_binding_without_pairing() async throws {
+        let (store, pending, _) = try await makePendingStore()
+        let client = ControlledManagerAuthClient()
+        client.enqueuePair(.success(session()))
+        let manager = SessionManager(bindingStore: store, authClient: client, clock: TestSessionClock())
+        _ = try await manager.register(binding: pending, carToken: "car-token")
+        let other = PendingBinding(bindingId: UUID(), publicCertificate: "other")
+
+        do {
+            _ = try await manager.register(binding: other, carToken: "other-token")
+            Issue.record("A different registration must be rejected before starting pair")
+        } catch is RegistrationFailure {}
+        #expect(client.pairCalls == 1)
     }
 
     @Test func test_update_rejects_different_registered_binding() async throws {

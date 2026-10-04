@@ -39,3 +39,26 @@ Integration намеренно не запускался согласно гра
 - `ZDEEP/ZDEEP/Session/SessionManager.swift`
 - `ZDEEP/ZDEEPTests/SessionManagerTests.swift`
 - `.superpowers/sdd/2026-10-04-mobile-session-implementation/task-3-report.md`
+
+## Дополнительный review fix round
+
+По замечаниям Sol добавлены семь регрессионных сценариев. RED прогон полного unit-набора на Simulator: 85 тестов, 5 упавших тестов (6 assertions/issues): отсутствие `entryFailed` при ошибке сохранения; `stop()` из события `authorizationActivityChanged(false)` оставлял ожидателей с успехом; отмена caller внутри синхронного `sessionChanged` терялась; дедлайн после callback не проверялся; регистрация другой привязки запускала второй `pair`. Результат RED: `.artifacts/runs/20261004-154036-1791117636687228000/Tests.xcresult`.
+
+Исправления:
+
+- `finish` оставляет операцию и waiter-ы доступными при доставке `authorizationActivityChanged(false)`, затем повторно проверяет актуальность перед разрешением waiter-ов; reentrant stop завершает их `CancellationError`.
+- Ожидающие операции проверяют отмену `Task` после возобновления continuation, до возврата сессии.
+- Ошибка сохранения регистрирует `entryFailed` с этапом `storage` перед завершением операции.
+- Срок проверяется после callback delivery при завершении и ещё раз непосредственно после возобновления каждого caller. Истечение возвращает ошибку публикации; `RegistrationFailure` сохраняет `RegisteredBinding`.
+- `register` отклоняет binding ID, отличный от сохранённого, до запуска `pair`.
+- Добавлены проверки повторного JWT после истечения (остается `BAD_RESPONSE`) и допустимости той же строки JWT после `stop()`.
+
+Полный GREEN unit прогон:
+
+```sh
+python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A
+```
+
+Результат: PASS, 85 тестов в 13 suites. Result bundle: `.artifacts/runs/20261004-154430-1791117870047952000/Tests.xcresult`. Первый запуск без sandbox разрешения остановлен из-за недоступности CoreSimulator; повтор выполнен с разрешённым Simulator доступом. Между production правками возник диагностический сбой Swift type inference в cancellation wrapper; явная аннотация результата `AuthSession` устранила его, после чего полный unit прошёл.
+
+Integration не запускался: исправления ограничены менеджером и его unit-регрессиями.
