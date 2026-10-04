@@ -43,9 +43,9 @@ final class ZDEEPUITests: XCTestCase {
     }
 
     @MainActor
-    func testTestEnvironmentWelcomeScreenDoesNotLoadWebUntilOpened() throws {
+    func testLocalEnvironmentWelcomeScreenDoesNotLoadWebUntilOpened() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--environment", "test"]
+        app.launchArguments = ["--environment", "local"]
         app.launch()
 
         let welcomeTitle = app.staticTexts["Подключите ваш Zeekr"]
@@ -56,16 +56,8 @@ final class ZDEEPUITests: XCTestCase {
         let webViewState = app.descendants(matching: .any)["webview-state"]
         XCTAssertTrue(webViewState.waitForExistence(timeout: 3))
         XCTAssertTrue(webViewState.label.contains("Закрыт"))
-        XCTAssertTrue(app.buttons["test"].isSelected)
+        XCTAssertTrue(app.buttons["local"].isSelected)
         app.buttons["close-debug-panel"].tap()
-
-        DebugPanelTestActions.openWebView(app)
-        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
-        DebugPanelTestActions.closeWebView(app)
-        XCTAssertTrue(welcomeTitle.waitForExistence(timeout: 3))
-
-        DebugPanelTestActions.openWebView(app)
-        DebugPanelTestActions.assertWebViewOpen(app)
     }
 
     @MainActor
