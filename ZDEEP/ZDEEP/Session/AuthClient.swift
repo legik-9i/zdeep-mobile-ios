@@ -213,9 +213,17 @@ final class AuthClient: AuthClientProtocol {
             networkStage = stage
             networkDeadline = deadline
             networkContinuation = continuation
-            timeoutHandle = clock.schedule(at: deadline) { [weak self] in
+            let scheduledTimeout = clock.schedule(at: deadline) { [weak self] in
                 self?.timeoutAttempt(attemptId)
             }
+            guard currentAttemptId == attemptId,
+                  networkAttemptId == attemptId,
+                  networkContinuation != nil else {
+                // Cancellation may run synchronously while the clock installs its callback.
+                scheduledTimeout.cancel()
+                return
+            }
+            timeoutHandle = scheduledTimeout
             networkTask = Task { @MainActor [weak self, transport] in
                 guard let self,
                       !Task.isCancelled,

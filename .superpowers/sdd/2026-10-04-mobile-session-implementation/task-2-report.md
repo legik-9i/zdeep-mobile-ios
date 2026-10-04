@@ -51,3 +51,13 @@ Sol review выявил потенциальные traps при преобраз
 - `python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — **66/66 passed, 12 suites**; `.artifacts/runs/20261004-151123-1791115883315442000/Tests.xcresult`.
 - `python3 scripts/zdeep.py test --environment local --suite integration --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — **7/7 passed**; `.artifacts/runs/20261004-151149-1791115909895780000/Tests.xcresult`. Использовались только local endpoints; токены и тела запросов не выводились.
 - `git diff --check` — passed.
+
+## Review follow-up — детерминированная отмена при установке таймера
+
+Повторная Sol-проверка отметила, что версия cancellation fixture с двумя `MainActor` tasks не задавала их порядок. Исправил тест: callback синхронно вызывает `invalidateCurrentAttempt()` изнутри `SessionClock.schedule`, после установки continuation, но до создания `networkTask`. Теперь проверка получает единственный `CancellationError`, подтверждает ноль HTTP отправок и ноль активных timeout handles.
+
+Без production cleanup новый focused test был RED только по утёкшему timeout handle (`activeScheduleCount == 1`). `AuthClient.send` теперь проверяет, что попытка и continuation ещё активны сразу после возврата из `schedule`; если cancellation завершилась синхронно, полученный handle сразу отменяется и network launch не создаётся.
+
+- Focused `python3 scripts/zdeep.py test --environment local --suite unit --only 'AuthClientTests/test_cancel_before_queued_network_launch_does_not_send()' --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — **1/1 passed**, `.artifacts/runs/20261004-151750-1791116270754051000/Tests.xcresult`.
+- Полный `python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — **66/66 passed, 12 suites**, `.artifacts/runs/20261004-151810-1791116290383131000/Tests.xcresult`.
+- Изменение касается только synchronous timeout-scheduling/cancellation пути; последний полный `integration/local` прогон после предыдущего Task 2 review fix — **7/7 passed** (`20261004-151149-1791115909895780000`).

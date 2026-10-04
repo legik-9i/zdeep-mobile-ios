@@ -26,16 +26,16 @@ struct AuthClientTests {
         let clock = TestSessionClock()
         let transport = TestAuthHTTPTransport()
         let client = AuthClient(bindingStore: store, transport: transport, clock: clock, endpoints: AppEnvironment.local.endpoints)
-        clock.onSchedule = { Task { @MainActor in client.invalidateCurrentAttempt() } }
+        clock.onSchedule = { client.invalidateCurrentAttempt() }
 
         do {
             _ = try await client.pair(binding: binding, carToken: try LocalAuthFixture.carToken())
             Issue.record("Invalidated attempts must complete with cancellation")
         } catch is CancellationError {}
 
-        for _ in 0..<4 { await Task.yield() }
         #expect(transport.requests.isEmpty)
         #expect(transport.cancelCount == 1)
+        #expect(clock.activeScheduleCount == 0)
     }
 
     @Test func test_urlsession_transport_rejects_already_cancelled_caller() async throws {

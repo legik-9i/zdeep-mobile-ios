@@ -16,6 +16,7 @@ final class TestSessionClock: SessionClock {
     var onSchedule: (@MainActor () -> Void)?
     private var entries: [Entry] = []
     private var cancelled: Set<UUID> = []
+    var activeScheduleCount: Int { entries.filter { !cancelled.contains($0.id) }.count }
 
     init(wallTimeMs: Double = 1_000_000) {
         self.wallTimeMs = wallTimeMs
