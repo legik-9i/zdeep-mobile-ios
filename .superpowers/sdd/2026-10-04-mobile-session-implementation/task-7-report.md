@@ -50,3 +50,7 @@ Final verification after the changes used local environment on Simulator `0DDEE4
 - Initial feature-behavior RED: `.artifacts/runs/20261004-193234-1791131554128568000/Tests.xcresult`.
 
 All fixtures use synthetic identities/tokens. No real JWT, QR token, key, or auth response body was printed or persisted.
+
+Для закрытия замечания о недостающем pre-commit сценарии добавлен `test_precommit_calls_start_in_order_but_finish_independently`. Он ставит оба вызова в page-world script до `load`: `getSession` остаётся pending, `getHostState` завершает работу, авторизационные side effects отсутствуют; после публикации фиктивной сессии завершается и `getSession`. Первый запуск выявил ошибку fixture wiring: test user script добавлялся до `prepare`, а `WebSession.prepare` очищает пользовательские scripts; тест перенесён на регистрацию после `prepare` и до `load`. Это не поведенческий RED.
+
+После этого focused pre-commit test passed, а полный integration suite повторно прошёл **19/19** без failures. Result: `.artifacts/runs/20261004-194915-1791132555044294000/Tests.xcresult`. Full unit result remains **126/126**: `.artifacts/runs/20261004-194145-1791132105810577000/Tests.xcresult`.

@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Testing
+import WebKit
 @testable import ZDEEP
 
 @MainActor
@@ -227,6 +228,36 @@ extension WebSessionIntegrationTests {
         for _ in 0..<50 where manager.subscriberCount != 1 { try await Task.sleep(for: .milliseconds(20)) }
         #expect(manager.subscriberCount == 1)
         #expect(try await session.executeJavaScript("typeof window.__oldWaiter", timeout: .seconds(5)) == .string("undefined"))
+    }
+
+    @Test func test_precommit_calls_start_in_order_but_finish_independently() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        let manager = BridgeTestSessionManager()
+        manager.currentSession = nil
+        manager.isAuthorizationInFlight = true
+        let session = WebSession(trustedURL: url)
+        _ = NativeBridge(session: session, manager: manager) { _, _ in }
+        session.prepare(url: url, reason: .initial)
+        session.webView.configuration.userContentController.addUserScript(WKUserScript(
+            source: "window.__earlySessionDone = false; window.ZdeepNative.getSession().then(() => { window.__earlySessionDone = true }); window.__earlyHostDone = false; window.ZdeepNative.getHostState().then(state => { window.__earlyHostDone = state.appState === 'foreground' });",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: .page
+        ))
+        defer { session.close() }
+
+        #expect(manager.updateCalls == 0)
+        session.load(url: url)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        _ = try await session.waitForJavaScript("window.__earlyHostDone === true", equals: .bool(true), timeout: .seconds(5))
+        #expect(try await session.executeJavaScript("window.__earlySessionDone", timeout: .seconds(5)) == .bool(false))
+        #expect(manager.updateCalls == 0)
+
+        manager.currentSession = BridgeTestSessionManager.fixtureSession
+        manager.isAuthorizationInFlight = false
+        manager.emit(.sessionChanged(BridgeTestSessionManager.fixtureSession))
+        _ = try await session.waitForJavaScript("window.__earlySessionDone", equals: .bool(true), timeout: .seconds(5))
     }
 }
 
