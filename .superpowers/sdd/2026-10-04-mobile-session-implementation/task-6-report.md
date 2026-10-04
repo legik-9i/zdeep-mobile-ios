@@ -44,3 +44,21 @@
 - Integration: `python3 scripts/zdeep.py test --environment local --suite integration --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — **12/12**, 1 suite; включает inherited `test_real_web_url_and_native_object`, `test_foreign_server_redirect_does_not_commit_document` и mailto cancellation; `.artifacts/runs/20261004-183452-1791128092595219000/Tests.xcresult`.
 - Focused проверки RED/GREEN и teardown: RED mailto `.artifacts/runs/20261004-181445-1791126885297930000/Tests.xcresult`; RED policy `.artifacts/runs/20261004-181853-1791127133506143000/Tests.xcresult`; initial GREEN redirect `.artifacts/runs/20261004-181144-1791126704768802000/Tests.xcresult`; GREEN mailto `.artifacts/runs/20261004-182011-1791127211981545000/Tests.xcresult`; focused teardown `.artifacts/runs/20261004-182232-1791127352817297000/Tests.xcresult`.
 - Sol Minor отложен до Task 7: `test_file_fixture_has_no_real_session` проверяет JS object и identity, но пока нет настоящего bridge, поэтому не доказывает отсутствие реальной session. Добавить содержательную security assertion вместе с Task 7 bridge; текущий тест здесь не расширялся.
+
+## Sol follow-up — form-submission cancellation
+
+Исторический прогон на `af5d263` ниже выполнен до нового Sol ruling о scripted foreign form submission; актуальное решение и повторные проверки записаны в следующем разделе.
+
+- На `af5d263` временно возвращено предыдущее production-условие `navigationType != .linkActivated`, при сохранённом новом integration тесте `test_unsupported_form_submission_preserves_current_document`. RED на Simulator: focused test завершился 2 failures — сформировался `.documentFailed` и текущий документ потерял committed-состояние. После восстановления закоммиченного Sol predicate `navigationType == .other` тест прошёл 1/1.
+- `python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — **122/122**, 18 suites; `.artifacts/runs/20261004-184324-1791128604862850000/Tests.xcresult`.
+- `python3 scripts/zdeep.py test --environment local --suite integration --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — **13/13**, 1 suite; mailto link, mailto form submission, foreign redirect и inherited `test_real_web_url_and_native_object` прошли; `.artifacts/runs/20261004-184348-1791128628890567000/Tests.xcresult`.
+- Исходный код не менялся; временная RED-правка восстановлена. Test/prod и физическое устройство не использовались.
+
+## Sol ruling follow-up — automatic foreign form submission
+
+- Новое решение Sol: только `.linkActivated` является exempt user action; foreign `.formSubmitted` и `.formResubmitted` являются автоматической main-frame навигацией и должны завершать текущий документ ошибкой. Unit expectations и WebKit integration regression обновлены первыми; scripted `form.requestSubmit()` ожидает `.documentFailed` и снятие committed-состояния.
+- RED против текущего `af5d263` predicate (`navigationType == .other`): `test_unsupported_form_submission_fails_current_document` завершился двумя ожидаемыми failures — `failed` оставался false, а документ оставался committed. Результат: `.artifacts/runs/20261004-185035-1791129035853207000/Tests.xcresult`.
+- После изменения predicate на `navigationType != .linkActivated` focused GREEN прошёл 1/1: `.artifacts/runs/20261004-185114-1791129074699159000/Tests.xcresult`. Unit проверяет, что formSubmitted/formResubmitted завершают документ ошибкой, а linkActivated сохраняет документ.
+- Полный unit suite: **122/122**, 18 suites; `.artifacts/runs/20261004-185138-1791129098692954000/Tests.xcresult`.
+- Полный integration/local suite: **13/13**, 1 suite; mailto user link остаётся без ошибки, scripted mailto form submission завершает документ, foreign redirect и inherited local WebSession тесты прошли; `.artifacts/runs/20261004-185201-1791129121681816000/Tests.xcresult`.
+- Test/prod и физическое устройство не использовались.

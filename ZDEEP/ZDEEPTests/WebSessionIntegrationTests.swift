@@ -175,7 +175,7 @@ struct WebSessionIntegrationTests {
         #expect(oldWebView == nil)
     }
 
-    @Test func test_unsupported_form_submission_preserves_current_document() async throws {
+    @Test func test_unsupported_form_submission_fails_current_document() async throws {
         let session = try await makeLoadedSession()
         defer { session.close() }
         let document = try #require(session.currentDocument)
@@ -190,9 +190,9 @@ struct WebSessionIntegrationTests {
         )
         try await Task.sleep(for: .milliseconds(250))
 
-        #expect(!failed)
+        #expect(failed)
         #expect(session.currentDocument == document)
-        #expect(session.isCurrentDocumentCommitted)
+        #expect(!session.isCurrentDocumentCommitted)
     }
 
     @Test func test_close_releases_old_webview_and_history() async throws {

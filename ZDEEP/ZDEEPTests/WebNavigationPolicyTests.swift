@@ -107,11 +107,11 @@ struct WebNavigationPolicyTests {
             url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
             isMainFrame: true, navigationType: .linkActivated
         ))
-        #expect(!WebNavigationPolicy.shouldFailDocumentNavigation(
+        #expect(WebNavigationPolicy.shouldFailDocumentNavigation(
             url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
             isMainFrame: true, navigationType: .formSubmitted
         ))
-        #expect(!WebNavigationPolicy.shouldFailDocumentNavigation(
+        #expect(WebNavigationPolicy.shouldFailDocumentNavigation(
             url: URL(string: "mailto:help@example.com")!, trustedURL: origin,
             isMainFrame: true, navigationType: .formResubmitted
         ))

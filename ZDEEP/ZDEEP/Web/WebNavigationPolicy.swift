@@ -30,7 +30,7 @@ enum WebNavigationPolicy {
         navigationType: WKNavigationType
     ) -> Bool {
         isMainFrame
-            && navigationType == .other
+            && navigationType != .linkActivated
             && !sameOrigin(url, trustedURL)
     }
 
