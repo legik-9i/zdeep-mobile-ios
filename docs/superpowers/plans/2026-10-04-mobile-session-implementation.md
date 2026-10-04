@@ -227,7 +227,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 ## Задачи
 
-### Задача 1. Сериализованное хранилище и восстановление установки
+### Task 1: Сериализованное хранилище и восстановление установки
 
 **Файлы:** создать четыре `Session/Binding*.swift`/адаптера из таблицы; `ZDEEP/ZDEEPTests/BindingStoreTests.swift`, `Support/SessionTestDoubles.swift`.
 
@@ -251,7 +251,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit, проверить PASS; коммит `feat: add durable binding store`.
 
-### Задача 2. Одна подписанная HTTP-попытка и проверка ответа
+### Task 2: Одна подписанная HTTP-попытка и проверка ответа
 
 **Файлы:** создать пять Session-файлов времени/API из таблицы; изменить `ZDEEP/ZDEEPTests/WebSessionIntegrationTests.swift` для `@Suite(.serialized)`; `AuthClientTests.swift`, `AuthResponseValidatorTests.swift`, `Support/LocalAuthFixture.swift`, `WebSessionIntegrationTests+LocalAuth.swift` в `ZDEEP/ZDEEPTests`.
 
@@ -277,7 +277,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit и integration на local; оба PASS; коммит `feat: add signed mobile auth client`.
 
-### Задача 3. Менеджер: публикация и одна общая операция
+### Task 3: Менеджер: публикация и одна общая операция
 
 **Файлы:** создать `Session/SessionManager.swift`, `ZDEEP/ZDEEPTests/SessionManagerTests.swift`; дополнить test doubles управляемыми ответами/сохранением.
 
@@ -302,7 +302,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit, PASS; коммит `feat: coordinate shared authorization and publication`.
 
-### Задача 4. Обновление, повторы и активность приложения
+### Task 4: Обновление, повторы и активность приложения
 
 **Файлы:** создать `Session/SessionRefreshPolicy.swift`, `SessionRefreshTests.swift`; изменить SessionManager.
 
@@ -325,7 +325,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit, PASS; коммит `feat: schedule session refresh and recovery`.
 
-### Задача 5. Разбор QR и адаптер камеры
+### Task 5: Разбор QR и адаптер камеры
 
 **Файлы:** создать три Camera-файла из таблицы, `CarQRParserTests.swift`, `CameraPermissionTests.swift`; изменить `ZDEEP/Info.plist`, `ZDEEP/ZDEEP.xcodeproj/project.pbxproj`, создать соответствующий `Package.resolved` проекта.
 
@@ -346,7 +346,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit и сборку через test-команду, PASS; коммит `feat: add QR scanner and camera permission adapter`.
 
-### Задача 6. Контейнер: документ и политика навигации
+### Task 6: Контейнер: документ и политика навигации
 
 **Файлы:** изменить `Web/WebSession.swift`, `Web/WebViewHost.swift`, фабрику в `App/AppCoordinator.swift`; создать WebDocumentContext/WebNavigationPolicy, `WebNavigationPolicyTests.swift`, `WebDocumentContextTests.swift`; расширить `WebSessionIntegrationTests.swift`.
 
@@ -368,7 +368,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit и integration local, PASS; коммит `feat: constrain WebView navigation and document lifetime`.
 
-### Задача 7. Полный JS bridge и события
+### Task 7: Полный JS bridge и события
 
 **Файлы:** создать NativeBridge/BridgeModels/BridgeBootstrap.js, `NativeBridgeTests.swift`, `WebSessionIntegrationTests+Bridge.swift`, `Fixtures/bridge-contract.html`; изменить WebSession и включение JS/fixture в resources.
 
@@ -394,7 +394,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit и integration local, PASS; коммит `feat: implement native session bridge`.
 
-### Задача 8. Логотип, загрузка и экран ошибки
+### Task 8: Логотип, загрузка и экран ошибки
 
 **Файлы:** изменить `ZDEEP/ZDEEP/ZDEEPApp.swift` и `ZDEEP/ZDEEPUITests/ZDEEPUITests.swift` для local-only launch; создать Presentation-файлы кроме FirstFrameProbe и debug-only `Debug/SessionUITestFixture.swift`; assets `StartupLogo.imageset`, `NativeBackground.colorset`, `LaunchScreen.storyboard`; заполнить AppIcon.appiconset; изменить Info.plist/проект; `NativePresentationTests.swift`, `ZDEEPUITests/NativePresentationUITests.swift`; сохранить источник error HTML в `docs/design/assets/native-error/`.
 
@@ -418,7 +418,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 
 - [ ] Запустить unit/ui local и сравнить screenshot ошибки с HTML при сопоставимом viewport; коммит `feat: add native session status screens and branding`.
 
-### Задача 9. Старт координатора и отложенная подготовка веба
+### Task 9: Старт координатора и отложенная подготовка веба
 
 **Файлы:** изменить AppCoordinator, ContentView, ZDEEPApp, WelcomeView; создать App/AppRootView.swift, Presentation/FirstFrameProbe.swift и Session/BackgroundExecution.swift; изменить `scripts/zdeep_tools/build.py`, `scripts/tests/test_build.py`; расширить AppState; расширить CoordinatorTests, `ZDEEP/ZDEEPUITests/ZDEEPUITests.swift`, `DebugPanelUITests.swift`, `DiagnosticMailboxUITests.swift`, `DiagnosticMailboxLaunchTests.swift` и `ZDEEP/ZDEEPTests/WebSessionIntegrationTests.swift` по зависимостям старого открытия.
 
@@ -443,7 +443,7 @@ CLI сейчас относит к integration только `WebSessionIntegrati
 - [ ] В этой же задаче адаптировать прежние open/close/lazy WebView ожидания, а не откладывать до12: CoordinatorTests используют fake manager/store и prepared-vs-visible состояние; ZDEEPUITests/DebugPanelUITests/DiagnosticMailboxUITests работают с hidden prepared local WebView, диагностические open flags не раскрывают его. DebugPanelTestActions ожидает подготовленный контейнер вместо auth bypass. Сохранить тесты JS/late replies/mailbox, сменив только способ получения доступного документа. `WebSessionIntegrationTests.test_full_reset_clears_web_cookie_and_local_storage` создаёт WebSession напрямую для записи cookie/storage, закрывает его до reset и создаёт новый напрямую для чтения; не использует coordinator.openWebView. Полный набор после9 не содержит ожиданий прежнего bypass.
 - [ ] Добавить UI startup/welcome/loading тесты; проверить first reveal с тем же id контейнера через unit. Запустить unit/integration/ui local и `python3 -m unittest discover -s scripts/tests`, PASS; коммит `feat: connect staged startup and web preparation`.
 
-### Задача 10. Камера, регистрация, отмена и перепривязка
+### Task 10: Камера, регистрация, отмена и перепривязка
 
 **Файлы:** создать AppCoordinator+Authorization.swift и AppCoordinator+Reset.swift; изменить AppCoordinator/ContentView; расширить CoordinatorTests и `ZDEEPUITests/AuthorizationUITests.swift`; расширить debug-only `Debug/SessionUITestFixture.swift` задачи 8.
 
@@ -471,7 +471,7 @@ guard case .welcome = coordinator.screen else {
 
 - [ ] Запустить unit/ui local, PASS; коммит `feat: implement QR binding and cancellable local reset`.
 
-### Задача 11. Готовность, повторы веба и восстановление процесса
+### Task 11: Готовность, повторы веба и восстановление процесса
 
 **Файлы:** создать AppCoordinator+WebPreparation.swift; расширить AppCoordinator/AppState/CoordinatorTests; создать `WebReadinessTests.swift`, дополнить WebKit integration.
 
@@ -495,7 +495,7 @@ guard case .welcome = coordinator.screen else {
 
 - [ ] Запустить unit/integration/ui local, PASS; коммит `feat: coordinate WebView readiness and recovery`.
 
-### Задача 12. Полный debug-сброс, смена окружения и диагностика
+### Task 12: Полный debug-сброс, смена окружения и диагностика
 
 **Файлы:** создать App/OwnedClientDataCleaner.swift, `OwnedClientDataCleanerTests.swift`; расширить AppCoordinator+Reset, DebugPanel, DiagnosticMailbox/LaunchConfiguration при необходимости wiring, существующие CoordinatorTests/DebugPanelUITests/DiagnosticMailboxUITests; дополнить WebKit reset integration.
 
@@ -518,7 +518,7 @@ guard case .welcome = coordinator.screen else {
 
 - [ ] Запустить unit/integration/ui local; при изменении CLI дополнительно `python3 -m unittest discover -s scripts/tests`. PASS; коммит `feat: integrate complete reset and session diagnostics`.
 
-### Задача 13. Сквозная приёмка на Simulator и отчёт
+### Task 13: Сквозная приёмка на Simulator и отчёт
 
 **Файлы:** расширить `WebSessionIntegrationTests+LocalAuth.swift`, `WebSessionIntegrationTests+Bridge.swift`, AuthorizationUITests; создать `docs/development/mobile-session-verification.md`.
 
