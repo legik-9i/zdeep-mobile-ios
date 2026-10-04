@@ -162,7 +162,7 @@ class BuildManager:
             integration_selector = f"{target_prefix}{result_only}"
         elif only is not None and suite == "unit":
             result_only = only.removeprefix("ZDEEPTests/")
-        code_signing = suite == "unit" and environment == "local"
+        code_signing = suite in {"unit", "all"} and environment == "local"
         fingerprint = self.fingerprint(simulator, code_signing=code_signing)
         if skip_build:
             artifact = self.cache.get(fingerprint)
@@ -175,6 +175,11 @@ class BuildManager:
                             artifact = candidate
                             break
             if artifact is None:
+                if code_signing:
+                    raise BuildError(
+                        f"Нет актуальной подписанной Simulator-сборки для {suite}/local; "
+                        "запустите `test` без `--skip-build` (команда `build-tests` создаёт сборку без подписи)"
+                    )
                 raise BuildError("Нет актуальной сборки для этих исходников; выполните build-tests")
         else:
             artifact = self.build(simulator, code_signing=code_signing)

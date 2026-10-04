@@ -79,8 +79,14 @@ class BuildManagerTests(unittest.TestCase):
         self.runner.reset_mock()
         self.manager.run("all", "local", "SIM-1")
         local_all = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", local_all)
-        self.assertNotIn("CODE_SIGN_IDENTITY=-", local_all)
+        self.assertIn("CODE_SIGNING_ALLOWED=YES", local_all)
+        self.assertIn("CODE_SIGN_IDENTITY=-", local_all)
+
+        self.runner.reset_mock()
+        self.manager.run("all", "test", "SIM-1")
+        test_all = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=NO", test_all)
+        self.assertNotIn("CODE_SIGN_IDENTITY=-", test_all)
 
         self.runner.reset_mock()
         self.manager.build("SIM-1")
@@ -92,6 +98,10 @@ class BuildManagerTests(unittest.TestCase):
         self.manager.run("unit", "local", "SIM-1")
         (self.root / "ZDEEP" / "source.swift").write_text("let value = 2")
         with self.assertRaises(BuildError):
+            self.manager.run("unit", "local", "SIM-1", skip_build=True)
+
+    def test_skip_build_guides_local_unit_to_signed_build(self):
+        with self.assertRaisesRegex(BuildError, "без `--skip-build`"):
             self.manager.run("unit", "local", "SIM-1", skip_build=True)
 
     def test_results_are_unique(self):
