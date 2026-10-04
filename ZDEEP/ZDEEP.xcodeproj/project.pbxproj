@@ -51,6 +51,7 @@
 		7C83CE27306F6FC900F39E01 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				A10000000000000000000004 /* CodeScanner in Frameworks */,
 			);
 		};
 		7C83CE34306F6FCA00F39E01 /* Frameworks */ = {
@@ -106,6 +107,9 @@
 			productName = ZDEEP;
 			productReference = 7C83CE2A306F6FC900F39E01 /* ZDEEP.app */;
 			productType = "com.apple.product-type.application";
+			packageProductDependencies = (
+				A10000000000000000000003 /* CodeScanner */,
+			);
 		};
 		7C83CE36306F6FCA00F39E01 /* ZDEEPTests */ = {
 			isa = PBXNativeTarget;
@@ -181,6 +185,9 @@
 			);
 			mainGroup = 7C83CE21306F6FC900F39E01;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7C83CE2B306F6FC900F39E01 /* Products */;
 			projectDirPath = "";
@@ -190,6 +197,23 @@
 				7C83CE36306F6FCA00F39E01 /* ZDEEPTests */,
 				7C83CE40306F6FCB00F39E01 /* ZDEEPUITests */,
 			);
+		};
+		A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/twostraws/CodeScanner";
+			requirement = {
+				kind = exactVersion;
+				version = 2.5.2;
+			};
+		};
+		A10000000000000000000003 /* CodeScanner */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */;
+			productName = CodeScanner;
+		};
+		A10000000000000000000004 /* CodeScanner in Frameworks */ = {
+			isa = PBXBuildFile;
+			productRef = A10000000000000000000003 /* CodeScanner */;
 		};
 /* End PBXProject section */
 
