@@ -67,3 +67,14 @@ Test/prod и физическое устройство не использова
 - `git diff --check` — PASS.
 
 Для этих двух тестов текущая handoff проверка подтверждает GREEN; тесты/production patch в этом ходе Luna не меняла. Test/prod и физическое устройство не использовались.
+
+### Stuck protocol по двум повторившимся замечаниям
+
+В следующем Sol re-review после Luna remediation `1e4a1d9` повторились замечания о таймауте без документа и сохранении URL после full-navigation retry. Причина повторения: первый фикс записывал старт бюджета при публикации JWT, но ставил timeout callback только при `documentPreparing`; URL сохранялся лишь в ветви с действующим JWT, а auth fallback терял его. Третье замечание — сохранение нативной ошибки при passive expiry — было закрыто.
+
+По правилу stuck protocol Sol узко исправил только эти две повторившиеся проблемы и добавил два fake-clock regression tests; проверки Sol не запускал. Luna получила handoff, не меняла production diff, запустила оба focused теста и полную матрицу. Исправление запускает terminal timeout после 60 active seconds от JWT даже без первого документа, а исходный URL проходит через token retry и загружается после успешной авторизации.
+
+- `test_readiness_timeout_without_document_after_jwt_publication` — GREEN 1/1, `.artifacts/runs/20261005-112441-1791188681012430000/Tests.xcresult`.
+- `test_web_retry_preserves_failed_navigation_url_after_token_refresh` — GREEN 1/1, `.artifacts/runs/20261005-112504-1791188704267647000/Tests.xcresult`.
+- Итоговый Simulator `local`: unit 190/190 (`.artifacts/runs/20261005-112621-1791188781364914000/Tests.xcresult`), integration 26/26 (`.artifacts/runs/20261005-112702-1791188822799643000/Tests.xcresult`), UI 22/22 (`.artifacts/runs/20261005-112827-1791188907077337000/Tests.xcresult`), `git diff --check` PASS.
+- Sol сделал stuck-protocol patch; Luna подтвердила результаты и закоммитила его вместе с тестами/отчётом как `8c47478590618b867aaaaa886771b59fddeaf038`. Test/prod и физическое устройство не использовались.
