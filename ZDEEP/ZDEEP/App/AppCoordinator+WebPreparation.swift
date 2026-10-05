@@ -7,7 +7,10 @@ extension AppCoordinator {
         switch event {
         case .documentPreparing(let identity, let url, let reason):
             guard identity.containerId == webSession?.id else { return }
-            let continuePendingBudget = readinessIdentity == nil && readinessStartedAt != nil
+            if readinessIdentity == nil, readinessRemaining == .zero,
+               case .error(.retryable(_, context: .web)) = screen { return }
+            let continuePendingBudget = readinessIdentity == nil
+                && (readinessStartedAt != nil || readinessRemaining < .seconds(60))
             cancelReadinessBudget(reset: false)
             currentCommittedDocument = nil
             acceptedReadyDocument = nil
@@ -94,7 +97,7 @@ extension AppCoordinator {
         revealAcceptedWebReadyIfPossible()
     }
 
-    func retryAuthorization(_ binding: RegisteredBinding) async {
+    func retryAuthorization(_ binding: RegisteredBinding, webURL: URL? = nil) async {
         guard restoredBinding?.bindingId == binding.bindingId,
               let scenarioID = activeScenarioID else { return }
         let webSession = self.webSession
@@ -107,7 +110,7 @@ extension AppCoordinator {
             _ = try await sessionManager.updateSession(binding: binding)
             guard activeScenarioID == scenarioID else { return }
             readinessRemaining = .seconds(60)
-            webSession?.prepareAndLoad(url: endpoints.web, reason: .explicitRetry)
+            webSession?.prepareAndLoad(url: webURL ?? endpoints.web, reason: .explicitRetry)
             readinessSessionDidChange()
         } catch {
             guard activeScenarioID == scenarioID else { return }
@@ -126,7 +129,7 @@ extension AppCoordinator {
         invalidateCurrentReadiness()
         webSession.invalidateCurrentDocument()
         if sessionManager.currentSession?.carId != binding.carId {
-            await retryAuthorization(binding)
+            await retryAuthorization(binding, webURL: url)
             return
         }
         guard activeScenarioID == scenarioID else { return }
@@ -138,7 +141,7 @@ extension AppCoordinator {
         guard let binding = restoredBinding,
               sessionManager.currentSession?.carId == binding.carId else { return }
         guard let identity = readinessIdentity else {
-            if readinessStartedAt == nil, readinessRemaining > .zero { readinessStartedAt = sessionClock.now }
+            startPendingReadinessBudget()
             return
         }
         if acceptedReadyDocument == identity {
@@ -153,6 +156,7 @@ extension AppCoordinator {
         readinessRemaining = max(.zero, readinessRemaining - (sessionClock.now - startedAt))
         readinessTimer?.cancel()
         readinessTimer = nil
+        pendingReadinessTimerID = nil
         readinessStartedAt = nil
     }
 
@@ -167,8 +171,43 @@ extension AppCoordinator {
         }
         readinessTimer?.cancel()
         readinessTimer = nil
+        pendingReadinessTimerID = nil
         readinessStartedAt = nil
         if reset { readinessRemaining = .seconds(60) }
+    }
+
+    private func startPendingReadinessBudget() {
+        guard let scenarioID = activeScenarioID, isActive, screen == .loading,
+              readinessIdentity == nil, readinessTimer == nil, readinessStartedAt == nil,
+              let binding = restoredBinding,
+              sessionManager.currentSession?.carId == binding.carId else { return }
+        let timerID = UUID()
+        pendingReadinessTimerID = timerID
+        if readinessRemaining == .zero {
+            pendingReadinessDidTimeout(timerID, scenarioID: scenarioID)
+            return
+        }
+        let startedAt = sessionClock.now
+        readinessStartedAt = startedAt
+        readinessTimer = sessionClock.schedule(at: startedAt + readinessRemaining) { [weak self] in
+            self?.pendingReadinessDidTimeout(timerID, scenarioID: scenarioID)
+        }
+    }
+
+    private func pendingReadinessDidTimeout(_ timerID: UUID, scenarioID: UUID) {
+        guard pendingReadinessTimerID == timerID,
+              activeScenarioID == scenarioID,
+              readinessIdentity == nil,
+              screen == .loading,
+              let binding = restoredBinding else { return }
+        cancelReadinessBudget(reset: false)
+        readinessRemaining = .zero
+        canCancelAuthorization = false
+        let failure = AuthFailure(kind: .timeout, stage: .web, attemptId: UUID(),
+            message: "Web session did not become ready", diagnosticCode: "WEB_READY_TIMEOUT")
+        screen = .error(.retryable(failure, context: .web(
+            url: endpoints.web, bindingId: binding.bindingId, reason: .initial
+        )))
     }
 
     private func startReadinessBudget(for identity: WebDocumentIdentity) {

@@ -81,6 +81,7 @@ final class AppCoordinator: ObservableObject {
     var readinessURL: URL?
     var readinessReason: WebPreparationReason = .initial
     var readinessTimer: (any CancellationHandle)?
+    var pendingReadinessTimerID: UUID?
     var readinessStartedAt: Duration?
     var readinessRemaining: Duration = .seconds(60)
     var readinessAcceptedScreen: WebReadyScreen?

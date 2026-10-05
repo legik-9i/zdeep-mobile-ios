@@ -77,6 +77,32 @@ struct WebReadinessTests {
         #expect(error.retryContext == .web(url: url, bindingId: binding.bindingId, reason: .initial))
     }
 
+    @Test func test_readiness_timeout_without_document_after_jwt_publication() async throws {
+        let clock = TestSessionClock()
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "synthetic", carId: "synthetic-car")
+        let manager = ReadinessTestSessionManager(currentSession: Self.session(carId: binding.carId))
+        let factory = ReadinessTestWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory,
+            bindingStore: ReadinessTestBindingStore(binding: binding),
+            sessionManager: manager,
+            sessionClock: clock
+        )
+        await coordinator.start()
+        manager.emit(.sessionChanged(Self.session(carId: binding.carId)))
+
+        clock.advance(by: .seconds(59))
+        #expect(coordinator.screen == .loading)
+        clock.advance(by: .seconds(1))
+        #expect(factory.sessions.isEmpty)
+        guard case .error(let error) = coordinator.screen else {
+            Issue.record("JWT publication must time out after 60 active seconds even before the first document")
+            return
+        }
+        #expect(error.retryContext == .web(url: url, bindingId: binding.bindingId, reason: .initial))
+    }
+
     @Test func test_new_document_gets_a_fresh_readiness_budget() async throws {
         let clock = TestSessionClock()
         let h = try await makeHarness(clock: clock)
@@ -213,6 +239,24 @@ struct WebReadinessTests {
         ))
         await h.coordinator.retry()
         #expect(h.web.lastLoadURL == navigationURL)
+    }
+
+    @Test func test_web_retry_preserves_failed_navigation_url_after_token_refresh() async throws {
+        let h = try await makeHarness(clock: TestSessionClock())
+        let navigationURL = url.appending(path: "account/settings")
+        let identity = WebDocumentIdentity(containerId: h.web.id, attemptId: UUID(), documentId: UUID())
+        h.coordinator.webSessionDidEmit(.documentPreparing(identity, navigationURL, .fullNavigation), scenarioID: h.scenarioID)
+        h.coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: h.scenarioID)
+        h.coordinator.webSessionDidEmit(.documentFailed(identity, Self.webFailure()), scenarioID: h.scenarioID)
+        h.manager.currentSession = nil
+        h.manager.nextUpdate = .success(Self.session(carId: h.binding.carId))
+        let previousUpdateCount = h.manager.updateCount
+
+        await h.coordinator.retry()
+
+        #expect(h.manager.updateCount == previousUpdateCount + 1)
+        #expect(h.web.lastLoadURL == navigationURL)
+        #expect(h.web.lastLoadReason == .explicitRetry)
     }
 
     @Test func test_native_error_survives_passive_auth_failure_and_success() async throws {

@@ -49,3 +49,21 @@ Unit, integration и UI запущены отдельно после после�
 - `git diff --check` — PASS.
 
 Test/prod и физическое устройство не использовались. Токены и тела auth-запросов не выводились.
+
+## Дополнительное исправление Sol по timeout без document и URL после token refresh
+
+В shared worktree поступили три production/test files от Sol: `AppCoordinator.swift`, `AppCoordinator+WebPreparation.swift`, `WebReadinessTests.swift`. Я их не перезаписывал и после handoff production-код не редактировал.
+
+- `test_readiness_timeout_without_document_after_jwt_publication` — PASS, 1/1; `.artifacts/runs/20261005-112441-1791188681012430000/Tests.xcresult`. Проверяет, что JWT запускает active timer без document и deadline переводит coordinator в web timeout error.
+- `test_web_retry_preserves_failed_navigation_url_after_token_refresh` — PASS, 1/1; `.artifacts/runs/20261005-112504-1791188704267647000/Tests.xcresult`. Проверяет полный путь: неуспешная full navigation → отсутствующая сессия → token retry → повтор того же navigation URL.
+
+### Повторная полная матрица на handoff diff
+
+Все команды выполнялись на Simulator `0DDEE416-EECF-4BF3-8F15-BA93A980033A`, только local:
+
+- `python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — PASS, 190 tests / 21 suites; `.artifacts/runs/20261005-112621-1791188781364914000/Tests.xcresult`.
+- `python3 scripts/zdeep.py test --environment local --suite integration --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — PASS, 26/26, `/health` HTTP 200; `.artifacts/runs/20261005-112702-1791188822799643000/Tests.xcresult`.
+- `python3 scripts/zdeep.py test --environment local --suite ui --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — PASS, 22/22; `.artifacts/runs/20261005-112827-1791188907077337000/Tests.xcresult`.
+- `git diff --check` — PASS.
+
+Для этих двух тестов текущая handoff проверка подтверждает GREEN; тесты/production patch в этом ходе Luna не меняла. Test/prod и физическое устройство не использовались.
