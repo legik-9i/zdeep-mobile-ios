@@ -105,7 +105,10 @@ final class AppCoordinator: ObservableObject {
         isWebViewOpen = open
     }
 
-    var canSwitchEnvironment: Bool { true }
+    var canSwitchEnvironment: Bool {
+        if case .error(.retryable(_, context: .fullReset)) = screen { return false }
+        return true
+    }
 
     init(
         configuration: LaunchConfiguration? = nil,
@@ -278,12 +281,14 @@ final class AppCoordinator: ObservableObject {
     }
 
     func startNewRestoreScenario() async {
+        let scenarioID = UUID()
+        activeScenarioID = scenarioID
         didReceiveFirstFrame = false
         do {
-            restoredBinding = try await bindingStore.restore()
-            let scenario = UUID()
-            activeScenarioID = scenario
-            if let binding = restoredBinding {
+            let binding = try await bindingStore.restore()
+            guard activeScenarioID == scenarioID else { return }
+            restoredBinding = binding
+            if let binding {
                 if restoreAfterCleanup != nil, let failure = restoreAfterCleanupFailure {
                     canCancelAuthorization = false
                     screen = .error(.retryable(failure, context: .restore))
@@ -305,7 +310,7 @@ final class AppCoordinator: ObservableObject {
                 }
             }
         } catch {
-            activeScenarioID = UUID()
+            guard activeScenarioID == scenarioID else { return }
             canCancelAuthorization = false
             let failure = Self.restoreFailure(error)
             if restoreAfterCleanup != nil { restoreAfterCleanupFailure = failure }
@@ -343,7 +348,7 @@ final class AppCoordinator: ObservableObject {
         }
         nativeBridge = bridge
 #if DEBUG
-        if configuration.usbDiagnosticsEnabled {
+        if configuration.isUSBDiagnosticsEnabled(in: environment) {
             let mailbox = DiagnosticMailbox(session: activeWebSession, environment: environment, eventStore: eventStore)
             diagnosticMailbox = mailbox
             mailbox.start()

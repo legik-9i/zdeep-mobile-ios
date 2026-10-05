@@ -952,6 +952,76 @@ struct CoordinatorTests {
         #expect(!coordinator.isWebViewOpen)
     }
 
+    @Test func test_stale_restore_after_two_environment_switches_cannot_replace_latest_scenario() async {
+        let staleBinding = RegisteredBinding(bindingId: UUID(), publicCertificate: "stale", carId: "old-car")
+        let store = DelayedFirstRestoreBindingStore(staleBinding: staleBinding)
+        let manager = CoordinatorSessionManager()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
+            bindingStore: store,
+            sessionManager: manager,
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: Self.makeOwnedDataAdapters())
+        )
+
+        let firstSwitch = Task { await coordinator.switchEnvironment(to: .test) }
+        await store.waitForFirstRestore()
+        await coordinator.switchEnvironment(to: .prod)
+        let newestScenario = coordinator.activeScenarioID
+        #expect(coordinator.environment == .prod)
+        #expect(coordinator.screen == .welcome)
+
+        await store.releaseFirst()
+        await firstSwitch.value
+
+        #expect(coordinator.environment == .prod)
+        #expect(coordinator.activeScenarioID == newestScenario)
+        #expect(coordinator.restoredBinding == nil)
+        #expect(coordinator.screen == .welcome)
+        #expect(manager.updateCount == 0)
+    }
+
+    @Test func test_failed_full_reset_cannot_be_bypassed_by_same_scope_switch() async {
+        let adapters = Self.makeOwnedDataAdapters(failing: .keychain)
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "fixture")
+        let manager = CoordinatorSessionManager()
+        manager.currentSession = Self.fixtureSession()
+        manager.hasPublishedSession = true
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "test"], variables: [:]),
+            bindingStore: CoordinatorBindingStore(result: .success(binding)),
+            sessionManager: manager,
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
+        )
+
+        await coordinator.resetClientData()
+        #expect(coordinator.environment == .test)
+        #expect(manager.updateCount == 0)
+        guard case .error(.retryable(_, context: .fullReset(let progress))) = coordinator.screen else {
+            Issue.record("Partial reset must keep cleanup pending")
+            return
+        }
+        #expect(progress.remaining == [.keychain])
+
+        await coordinator.switchEnvironment(to: .prod)
+
+        #expect(coordinator.environment == .test)
+        guard case .error(.retryable(_, context: .fullReset(let retryProgress))) = coordinator.screen else {
+            Issue.record("Same-scope switching must not clear a pending full reset")
+            return
+        }
+        #expect(retryProgress.remaining == [.keychain])
+        #expect(manager.updateCount == 0)
+        #expect(await (adapters[.keychain] as! CoordinatorOwnedDataAdapter).cleanCount == 1)
+
+        await coordinator.retry()
+
+        #expect(await (adapters[.keychain] as! CoordinatorOwnedDataAdapter).cleanCount == 2)
+        #expect(manager.updateCount == 1)
+        if case .error(.retryable(_, context: .fullReset)) = coordinator.screen {
+            Issue.record("Successful cleanup retry must leave the pending reset state")
+        }
+    }
+
     private static func fixtureSession() -> AuthSession {
         AuthSession(accessToken: "fixture-jwt", userId: "user", carId: "car", expiresAt: "later",
                     deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID())
@@ -1200,6 +1270,43 @@ private struct CoordinatorBindingStore: BindingStoring {
     let result: Result<RegisteredBinding?, BindingStoreError>
 
     func restore() async throws -> RegisteredBinding? { try result.get() }
+    func beginRegistration() async throws -> PendingBinding { throw BindingStoreError.registrationNotAllowed }
+    func sign(bindingId: UUID, bytes: Data) async throws -> Data { throw BindingStoreError.registrationNotAllowed }
+    func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding { throw BindingStoreError.registrationNotAllowed }
+    func reset() async throws {}
+}
+
+private actor DelayedFirstRestoreBindingStore: BindingStoring {
+    private let staleBinding: RegisteredBinding
+    private var restoreCount = 0
+    private var firstRestoreStarted = false
+    private var firstContinuation: CheckedContinuation<RegisteredBinding?, Error>?
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    init(staleBinding: RegisteredBinding) {
+        self.staleBinding = staleBinding
+    }
+
+    func restore() async throws -> RegisteredBinding? {
+        restoreCount += 1
+        guard restoreCount == 1 else { return nil }
+        firstRestoreStarted = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+        return try await withCheckedThrowingContinuation { firstContinuation = $0 }
+    }
+
+    func waitForFirstRestore() async {
+        guard !firstRestoreStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func releaseFirst() {
+        firstContinuation?.resume(returning: staleBinding)
+        firstContinuation = nil
+    }
+
     func beginRegistration() async throws -> PendingBinding { throw BindingStoreError.registrationNotAllowed }
     func sign(bindingId: UUID, bytes: Data) async throws -> Data { throw BindingStoreError.registrationNotAllowed }
     func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding { throw BindingStoreError.registrationNotAllowed }

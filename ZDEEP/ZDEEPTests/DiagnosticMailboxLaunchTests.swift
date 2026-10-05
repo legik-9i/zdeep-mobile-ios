@@ -82,6 +82,42 @@ struct DiagnosticMailboxLaunchTests {
         #expect(await filesAdapter.probePassed)
     }
 
+    @MainActor
+    @Test func switchingFromDiagnosticLocalToProdDoesNotStartMailboxForProdWebSession() async throws {
+        let handshake = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ZdeepDiagnostics/session.json")
+        try? FileManager.default.removeItem(at: handshake)
+        let factory = DiagnosticEligibilityWebSessionFactory()
+        let adapters: [OwnedDataCategory: any OwnedDataCategoryCleaning] = [
+            .keychain: DiagnosticCleanupProbe(),
+            .files: DiagnosticCleanupProbe(),
+            .preferences: DiagnosticCleanupProbe(),
+            .webData: DiagnosticCleanupProbe()
+        ]
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(
+                arguments: ["--environment", "local", "--usb-diagnostics", "--web-url", "http://127.0.0.1:1"],
+                variables: [:]
+            ),
+            sessionFactory: factory,
+            bindingStore: DiagnosticLaunchBindingStore(),
+            sessionManager: DiagnosticLaunchSessionManager(),
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
+        )
+        defer {
+            coordinator.closeCurrentWebSession()
+            try? FileManager.default.removeItem(at: handshake)
+        }
+
+        await coordinator.switchEnvironment(to: .prod)
+        let scenarioID = try #require(coordinator.activeScenarioID)
+        coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID)
+        try await Task.sleep(for: .milliseconds(500))
+
+        #expect(factory.environments == [.prod])
+        #expect(!FileManager.default.fileExists(atPath: handshake.path))
+    }
+
     private func waitForHandshake(at url: URL, sessionID: String) async throws -> Data {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while ContinuousClock.now < deadline {
@@ -105,6 +141,17 @@ private final class DiagnosticLaunchWebSessionFactory: WebSessionFactory {
         let session = DiagnosticLaunchWebSession()
         sessions.append(session)
         return session
+    }
+}
+
+@MainActor
+private final class DiagnosticEligibilityWebSessionFactory: WebSessionFactory {
+    private(set) var environments: [AppEnvironment] = []
+    private let localURL = URL(string: "http://127.0.0.1:1")!
+
+    func makeSession(for environment: AppEnvironment, endpoints: EnvironmentEndpoints) -> any WebSessionHandle {
+        environments.append(environment)
+        return WebSession(trustedURL: localURL)
     }
 }
 

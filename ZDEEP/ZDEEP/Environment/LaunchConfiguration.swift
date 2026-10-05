@@ -42,6 +42,19 @@ struct LaunchConfiguration {
 #endif
     }
 
+    func isUSBDiagnosticsEnabled(in environment: AppEnvironment) -> Bool {
+#if DEBUG
+        guard usbDiagnosticsEnabled else { return false }
+#if targetEnvironment(simulator)
+        return environment == .local || environment == .test
+#else
+        return environment == .test
+#endif
+#else
+        return false
+#endif
+    }
+
     func endpoints(for environment: AppEnvironment) -> EnvironmentEndpoints {
         guard environment == .local else { return environment.endpoints }
         let defaults = environment.endpoints

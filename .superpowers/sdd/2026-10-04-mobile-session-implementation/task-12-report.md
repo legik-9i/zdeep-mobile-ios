@@ -37,3 +37,28 @@ Release executable проверен `nm -a` и binary marker scan: symbols/strin
 Integration reset оставил в Simulator log невлияющие предупреждения SQLite `vnode unlinked while in use` для `Library/Caches/ru.zdeep.mobile/Cache.db*`: WebSession закрыта перед cleaner, persistent website data очищены и проверены пустыми до file deletion; повторно созданная WebView подтвердила отсутствие seeded cookie/localStorage. Integration assertions прошли.
 
 `git diff --check` прошёл. Python suite не запускался: scripts не менялись. Root-owned `progress.md` и `task-7-report.md` в commit не включены.
+
+## Remediation по review Sol
+
+Исправлены три Important замечания:
+
+1. Каждый `startNewRestoreScenario()` теперь ставит generation UUID до `restore()` и применяет результат или ошибку только пока этот UUID остаётся активным. Тест с приостановленным первым restore и вторым environment switch подтвердил, что stale binding больше не меняет scenario/screen и не запускает `updateSession`.
+2. Пока full reset содержит оставшиеся категории, environment picker/switch заблокирован. Retry повторяет только эти категории; restore/auth продолжается только после успешного cleanup. Тест подтвердил, что same-scope переключение не снимает `.fullReset` и не начинает auth, затем явный retry очищает keychain и только после него допускает restore/auth.
+3. При создании каждого WebSession mailbox opt-in повторно проверяется по целевой текущей environment и платформе. Fake local→prod switch с настоящей WebSession на loopback refused URL подтвердил, что prod WebSession не публикует USB mailbox handshake.
+
+### RED/GREEN remediation
+
+- RED stale restore: `.artifacts/runs/20261005-123514-1791192914079653000/Tests.xcresult`; GREEN: `.artifacts/runs/20261005-123936-1791193176628475000/Tests.xcresult`.
+- RED pending cleanup bypass: `.artifacts/runs/20261005-123535-1791192935100052000/Tests.xcresult`; GREEN: `.artifacts/runs/20261005-123959-1791193199440651000/Tests.xcresult`.
+- RED prod mailbox: `.artifacts/runs/20261005-123558-1791192958554846000/Tests.xcresult`; GREEN: `.artifacts/runs/20261005-124031-1791193231575885000/Tests.xcresult`.
+
+### Финальная проверка remediation
+
+| Проверка | Результат | xcresult |
+|---|---:|---|
+| Полный unit suite | PASS, 202 теста, 0 failures | `.artifacts/runs/20261005-124056-1791193256095494000/Tests.xcresult` |
+| Полный WebKit integration suite | PASS, 26 тестов, 0 failures | `.artifacts/runs/20261005-124123-1791193283689169000/Tests.xcresult` |
+| Полный UI suite | PASS, 22 теста, 0 failures | `.artifacts/runs/20261005-124227-1791193347872337000/Tests.xcresult` |
+| Release Simulator build | PASS | `.artifacts/release-build-remediation/Build/Products/Release-iphonesimulator/ZDEEP.app` |
+
+После dynamic eligibility изменения Release executable повторно проверен `nm -a` и binary marker scan: символы и маркеры `DiagnosticExecutor`, `DebugPanel`, `DiagnosticMailbox` отсутствуют. `git diff --check` прошёл.
