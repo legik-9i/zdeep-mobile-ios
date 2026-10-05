@@ -93,6 +93,8 @@ final class DiagnosticMailbox {
     private let environment: AppEnvironment
     private let eventStore: DiagnosticEventStore
     private var pollTask: Task<Void, Never>?
+    private var commandTasks: [UUID: Task<Void, Never>] = [:]
+    private var stoppedTasks: [Task<Void, Never>] = []
     private var replayGuard = DiagnosticMailboxReplayGuard()
     private var inFlightIDs = Set<UUID>()
 
@@ -146,9 +148,24 @@ final class DiagnosticMailbox {
     }
 
     func stop() {
-        pollTask?.cancel()
+        if let pollTask {
+            pollTask.cancel()
+            stoppedTasks.append(pollTask)
+        }
         pollTask = nil
+        for task in commandTasks.values {
+            task.cancel()
+            stoppedTasks.append(task)
+        }
+        commandTasks.removeAll()
+        inFlightIDs.removeAll()
         try? FileManager.default.removeItem(at: Self.directory.appendingPathComponent("session.json"))
+    }
+
+    func waitUntilStopped() async {
+        let tasks = stoppedTasks
+        stoppedTasks.removeAll()
+        for task in tasks { await task.value }
     }
 
     private func poll() async {
@@ -195,7 +212,7 @@ final class DiagnosticMailbox {
                 }
                 replayGuard.remember(request.id)
                 inFlightIDs.insert(request.id)
-                Task { [weak self] in await self?.execute(request) }
+                commandTasks[request.id] = Task { [weak self] in await self?.execute(request) }
             } catch {
                 write(Response(
                     id: uuid.uuidString.lowercased(),
@@ -210,7 +227,10 @@ final class DiagnosticMailbox {
     }
 
     private func execute(_ request: DiagnosticMailboxRequest) async {
-        defer { inFlightIDs.remove(request.id) }
+        defer {
+            inFlightIDs.remove(request.id)
+            commandTasks.removeValue(forKey: request.id)
+        }
         guard !session.isClosed, request.sessionId == session.id.uuidString.lowercased() else { return }
         let responseURL = outbox.appendingPathComponent("\(request.id.uuidString.lowercased()).json")
         guard !FileManager.default.fileExists(atPath: responseURL.path) else { return }

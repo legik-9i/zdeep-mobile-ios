@@ -16,6 +16,7 @@ final class DiagnosticEventStore: @unchecked Sendable {
     let fileURL: URL
     private let maxBytes: Int
     private let lock = NSLock()
+    private var writesSuspended = false
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -41,6 +42,7 @@ final class DiagnosticEventStore: @unchecked Sendable {
     func record(category: String, operationID: String? = nil, fields: [String: Any] = [:]) {
         lock.lock()
         defer { lock.unlock() }
+        guard !writesSuspended else { return }
 
         var events = readEvents()
         events.append(DiagnosticEvent(
@@ -88,6 +90,18 @@ final class DiagnosticEventStore: @unchecked Sendable {
         }
         try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: fileURL, options: .atomic)
+    }
+
+    func suspendWrites() {
+        lock.lock()
+        writesSuspended = true
+        lock.unlock()
+    }
+
+    func resumeWrites() {
+        lock.lock()
+        writesSuspended = false
+        lock.unlock()
     }
 
     func snapshot() -> [DiagnosticEvent] {

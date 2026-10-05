@@ -890,21 +890,124 @@ struct CoordinatorTests {
 
         await coordinator.switchEnvironment(to: .prod)
 
-        #expect(coordinator.environment == .local)
+        #expect(coordinator.environment == .prod)
         #expect(!coordinator.isWebViewOpen)
         #expect(factory.sessions.isEmpty)
     }
 
-    @Test func test_environment_switch_is_blocked_until_auth_manager_rebuild() async {
+    @Test func test_environment_cleanup_failure_keeps_old_configuration_and_target() async {
+        let adapters = Self.makeOwnedDataAdapters(failing: .keychain)
+        let cleaner = OwnedClientDataCleaner(adapters: adapters)
         let factory = FakeWebSessionFactory()
         let manager = CoordinatorSessionManager()
-        let state = FakeClientState()
+        manager.currentSession = Self.fixtureSession()
+        manager.hasPublishedSession = true
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
+            sessionFactory: factory,
+            sessionManager: manager,
+            ownedClientDataCleaner: cleaner
+        )
+
+        await coordinator.switchEnvironment(to: .prod)
+
+        #expect(coordinator.environment == .local)
+        #expect(coordinator.endpoints == AppEnvironment.local.endpoints)
+        #expect(manager.currentSession == nil)
+        #expect(factory.sessions.isEmpty)
+        guard case .error(.retryable(_, context: .environment(
+            let target, let previous, let stage, let progress
+        ))) = coordinator.screen else {
+            Issue.record("A failed owned-data cleanup must remain retryable and keep the old environment")
+            return
+        }
+        #expect(target == .prod)
+        #expect(previous == .local)
+        #expect(stage == .cleanup)
+        #expect(progress.remaining == [.keychain])
+    }
+
+    @Test func test_same_scope_switch_still_discards_memory_jwt_and_old_document() async {
+        let factory = FakeWebSessionFactory()
+        let manager = CoordinatorSessionManager()
+        manager.currentSession = Self.fixtureSession()
+        manager.hasPublishedSession = true
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "test"], variables: [:]),
+            sessionFactory: factory,
+            sessionManager: manager
+        )
+        await coordinator.start()
+        let scenarioID = coordinator.activeScenarioID
+        if let scenarioID { coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID) }
+        coordinator.openWebView()
+        let oldSession = factory.sessions.first
+
+        await coordinator.switchEnvironment(to: .prod)
+
+        #expect(coordinator.environment == .prod)
+        #expect(manager.currentSession == nil)
+        #expect(oldSession?.closeCount == 1)
+        #expect(coordinator.activeWebSession == nil)
+        #expect(!coordinator.isWebViewOpen)
+    }
+
+    private static func fixtureSession() -> AuthSession {
+        AuthSession(accessToken: "fixture-jwt", userId: "user", carId: "car", expiresAt: "later",
+                    deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID())
+    }
+
+    private static func makeOwnedDataAdapters(
+        failing failedCategory: OwnedDataCategory? = nil,
+        blocking blockedCategory: OwnedDataCategory? = nil,
+        gate: TestSaveGate? = nil
+    ) -> [OwnedDataCategory: any OwnedDataCategoryCleaning] {
+        Dictionary(uniqueKeysWithValues: [OwnedDataCategory.keychain, .files, .preferences, .webData].map {
+            ($0, CoordinatorOwnedDataAdapter(
+                failuresRemaining: $0 == failedCategory ? 1 : 0,
+                gate: $0 == blockedCategory ? gate : nil
+            ))
+        })
+    }
+
+    @Test func test_full_reset_failure_retries_only_remaining_data_before_auth() async {
+        let adapters = Self.makeOwnedDataAdapters(failing: .keychain)
+        let cleaner = OwnedClientDataCleaner(adapters: adapters)
+        let manager = CoordinatorSessionManager()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
+            sessionManager: manager,
+            ownedClientDataCleaner: cleaner
+        )
+
+        await coordinator.resetClientData()
+
+        guard case .error(.retryable(_, context: .fullReset(let progress))) = coordinator.screen else {
+            Issue.record("A partial full reset must expose a retryable cleanup state")
+            return
+        }
+        #expect(progress.remaining == [.keychain])
+        #expect(manager.updateCount == 0)
+
+        await coordinator.retry()
+
+        #expect(coordinator.screen == .welcome)
+        #expect(manager.updateCount == 0)
+        for (category, adapter) in adapters {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == (category == .keychain ? 2 : 1))
+        }
+    }
+
+    @Test func test_environment_switch_cleans_before_manager_rebuild() async {
+        let factory = FakeWebSessionFactory()
+        let manager = CoordinatorSessionManager()
+        let adapters = Self.makeOwnedDataAdapters()
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
             sessionFactory: factory,
             bindingStore: CoordinatorBindingStore(result: .success(nil)),
             sessionManager: manager,
-            clearClientState: { await state.clear() }
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
 
         await coordinator.switchEnvironment(to: .test)
@@ -913,12 +1016,14 @@ struct CoordinatorTests {
             coordinator: coordinator,
             eventStore: DiagnosticEventStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         )
-        #expect(coordinator.environment == .local)
-        #expect(coordinator.endpoints == AppEnvironment.local.endpoints)
+        #expect(coordinator.environment == .test)
+        #expect(coordinator.endpoints == AppEnvironment.test.endpoints)
         #expect(manager.updateCount == 0)
-        #expect(state.clearCount == 0)
         #expect(factory.sessions.isEmpty)
-        #expect(!panel.isEnvironmentPickerEnabled)
+        #expect(panel.isEnvironmentPickerEnabled)
+        for adapter in adapters.values {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 1)
+        }
     }
 
     @Test func test_debug_webview_status_tracks_prepared_to_visible_transition() async throws {
@@ -975,51 +1080,61 @@ struct CoordinatorTests {
     }
 
     @Test func test_cross_database_switch_requests_clear() async {
-        let state = FakeClientState()
+        let adapters = Self.makeOwnedDataAdapters()
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
-            clearClientState: { await state.clear() }
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
         await coordinator.switchEnvironment(to: .test)
 
-        #expect(state.clearCount == 0)
-        #expect(coordinator.environment == .local)
+        #expect(coordinator.environment == .test)
         #expect(!coordinator.isWebViewOpen)
+        for adapter in adapters.values {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 1)
+        }
     }
 
     @Test func test_suspended_environment_clear_blocks_open_and_stale_switches() async {
         let factory = FakeWebSessionFactory()
-        let state = FakeClientState()
+        let gate = TestSaveGate()
+        let adapters = Self.makeOwnedDataAdapters(blocking: .keychain, gate: gate)
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
             sessionFactory: factory,
-            clearClientState: { await state.clear() }
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
 
-        await coordinator.switchEnvironment(to: .test)
+        let firstSwitch = Task { await coordinator.switchEnvironment(to: .test) }
+        await gate.waitUntilStarted()
+        #expect(coordinator.environment == .local)
+        #expect(coordinator.isTransitioning)
+        coordinator.openWebView()
         await coordinator.switchEnvironment(to: .prod)
+        gate.resume()
+        await firstSwitch.value
 
         let panel = DebugPanel(coordinator: coordinator, eventStore: DiagnosticEventStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
-        #expect(!panel.isEnvironmentPickerEnabled)
+        #expect(panel.isEnvironmentPickerEnabled)
 
-        #expect(coordinator.environment == .local)
+        #expect(coordinator.environment == .test)
         #expect(!coordinator.isTransitioning)
         #expect(!coordinator.isWebViewOpen)
         #expect(factory.sessions.isEmpty)
-        #expect(state.clearCount == 0)
     }
 
     @Test func test_test_prod_switch_preserves_store() async {
-        let state = FakeClientState()
+        let adapters = Self.makeOwnedDataAdapters()
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "test"], variables: [:]),
-            clearClientState: { await state.clear() }
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
 
         await coordinator.switchEnvironment(to: .prod)
 
-        #expect(state.clearCount == 0)
-        #expect(coordinator.environment == .test)
+        #expect(coordinator.environment == .prod)
+        for adapter in adapters.values {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 0)
+        }
     }
 
     @Test func test_session_published_state_updates_coordinator_and_journal() async throws {
@@ -1166,7 +1281,12 @@ private final class CoordinatorSessionManager: SessionManaging {
     func emit(_ event: SessionManagerEvent) { observers.forEach { $0(event) } }
     func webViewDidBecomeVisible() {}
     func setActive(_ active: Bool) {}
-    func stop() {}
+    func stop() {
+        currentSession = nil
+        registeredBinding = nil
+        hasPublishedSession = false
+        lastError = nil
+    }
 }
 
 @MainActor
@@ -1336,7 +1456,7 @@ private final class FakeRegistrationSessionManager: SessionManaging {
 }
 
 @MainActor
-private final class TestSaveGate {
+private final class TestSaveGate: @unchecked Sendable {
     private var continuation: CheckedContinuation<Void, Never>?
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
@@ -1363,40 +1483,23 @@ private final class CoordinatorCancellation: CancellationHandle {
     func cancel() {}
 }
 
-@MainActor
-private final class FakeClientState {
-    private(set) var clearCount = 0
-
-    func clear() async {
-        clearCount += 1
+private actor CoordinatorOwnedDataAdapter: OwnedDataCategoryCleaning {
+    private var failuresRemaining: Int
+    private let gate: TestSaveGate?
+    private(set) var cleanCount = 0
+    init(failuresRemaining: Int = 0, gate: TestSaveGate? = nil) {
+        self.failuresRemaining = failuresRemaining
+        self.gate = gate
     }
-}
-
-private actor SuspendedClientStateClear {
-    private(set) var count = 0
-    private var clearContinuation: CheckedContinuation<Void, Never>?
-    private var startWaiters: [CheckedContinuation<Void, Never>] = []
-
-    func clear() async {
-        count += 1
-        guard count == 1 else { return }
-        let waiters = startWaiters
-        startWaiters.removeAll()
-        waiters.forEach { $0.resume() }
-        await withCheckedContinuation { continuation in
-            clearContinuation = continuation
+    func clean() async throws {
+        cleanCount += 1
+        await gate?.wait()
+        if failuresRemaining > 0 {
+            failuresRemaining -= 1
+            throw CoordinatorCleanupError.injected
         }
     }
-
-    func waitUntilClearStarts() async {
-        guard count == 0 else { return }
-        await withCheckedContinuation { continuation in
-            startWaiters.append(continuation)
-        }
-    }
-
-    func finishClear() {
-        clearContinuation?.resume()
-        clearContinuation = nil
-    }
+    func isEmpty() async throws -> Bool { failuresRemaining == 0 }
 }
+
+private enum CoordinatorCleanupError: Error { case injected }

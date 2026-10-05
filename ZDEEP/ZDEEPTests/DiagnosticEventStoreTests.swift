@@ -3,6 +3,20 @@ import Testing
 @testable import ZDEEP
 
 struct DiagnosticEventStoreTests {
+    @Test func test_suspended_journal_does_not_write_until_cleanup_completes() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fileURL = directory.appendingPathComponent("events.jsonl")
+        let store = DiagnosticEventStore(fileURL: fileURL)
+
+        store.suspendWrites()
+        store.record(category: "cleanup.inProgress")
+        #expect(!FileManager.default.fileExists(atPath: fileURL.path))
+
+        store.resumeWrites()
+        store.record(category: "cleanup.completed")
+        #expect(store.snapshot().map(\.category) == ["cleanup.completed"])
+    }
+
     @Test func test_secrets_are_removed_from_fields_and_urls() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let store = DiagnosticEventStore(fileURL: directory.appendingPathComponent("events.jsonl"))

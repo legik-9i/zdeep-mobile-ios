@@ -25,6 +25,12 @@ protocol SessionManaging: AnyObject {
     func webViewDidBecomeVisible()
     func setActive(_ active: Bool)
     func stop()
+    func stopAndWait() async
+}
+
+@MainActor
+extension SessionManaging {
+    func stopAndWait() async { stop() }
 }
 
 @MainActor
@@ -221,6 +227,12 @@ final class SessionManager: SessionManaging {
         if shouldEmitActivityFinished {
             emit(.authorizationActivityChanged(false), whileTokenIs: eventToken)
         }
+    }
+
+    func stopAndWait() async {
+        let task = operation?.task
+        stop()
+        await task?.value
     }
 
     private func request(_ request: Request) async throws -> AuthSession {

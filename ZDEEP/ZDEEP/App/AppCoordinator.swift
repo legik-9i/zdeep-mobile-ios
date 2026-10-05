@@ -53,13 +53,15 @@ final class AppCoordinator: ObservableObject {
 
     let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
-    private let clearClientState: () async -> Void
+    private let sessionManagerFactory: (AppEnvironment) -> any SessionManaging
+    private let usesInjectedSessionManager: Bool
+    let ownedClientDataCleaner: OwnedClientDataCleaner
     let eventStore: DiagnosticEventStore
     let sessionClock: any SessionClock
     let bindingStore: any BindingStoring
-    let sessionManager: any SessionManaging
+    private(set) var sessionManager: any SessionManaging
     let cameraPermission: any CameraPermissionProviding
-    private let backgroundExecution: BackgroundExecution
+    private var backgroundExecution: BackgroundExecution
     @Published var activeScenarioID: UUID?
     var isActive = true
     private var didStart = false
@@ -103,14 +105,14 @@ final class AppCoordinator: ObservableObject {
         isWebViewOpen = open
     }
 
-    var canSwitchEnvironment: Bool { false }
+    var canSwitchEnvironment: Bool { true }
 
     init(
         configuration: LaunchConfiguration? = nil,
         sessionFactory: (any WebSessionFactory)? = nil,
         bindingStore: (any BindingStoring)? = nil,
         sessionManager: (any SessionManaging)? = nil,
-        clearClientState: (() async -> Void)? = nil,
+        ownedClientDataCleaner: OwnedClientDataCleaner? = nil,
         eventStore: DiagnosticEventStore? = nil,
         cameraPermission: (any CameraPermissionProviding)? = nil,
         sessionClock suppliedSessionClock: (any SessionClock)? = nil
@@ -119,7 +121,7 @@ final class AppCoordinator: ObservableObject {
         self.configuration = configuration
         self.environment = configuration.environment
         self.sessionFactory = sessionFactory ?? DefaultWebSessionFactory()
-        self.clearClientState = clearClientState ?? Self.clearOwnedClientState
+        self.ownedClientDataCleaner = ownedClientDataCleaner ?? OwnedClientDataCleaner()
         let store = bindingStore ?? BindingStore()
         self.bindingStore = store
         self.cameraPermission = cameraPermission ?? SystemCameraPermissionProvider()
@@ -129,8 +131,18 @@ final class AppCoordinator: ObservableObject {
             bindingStore: store, transport: URLSessionAuthHTTPTransport(), clock: clock,
             endpoints: configuration.endpoints(for: configuration.environment)
         )
-        let manager = sessionManager ?? SessionManager(bindingStore: store, authClient: authClient, clock: clock)
+        let injectedManager = sessionManager
+        let manager = injectedManager ?? SessionManager(bindingStore: store, authClient: authClient, clock: clock)
         self.sessionManager = manager
+        usesInjectedSessionManager = injectedManager != nil
+        sessionManagerFactory = { environment in
+            if let injectedManager { return injectedManager }
+            let switchedClient = AuthClient(
+                bindingStore: store, transport: URLSessionAuthHTTPTransport(), clock: clock,
+                endpoints: configuration.endpoints(for: environment)
+            )
+            return SessionManager(bindingStore: store, authClient: switchedClient, clock: clock)
+        }
         backgroundExecution = BackgroundExecution(sessionManager: manager)
         let eventStore = eventStore ?? .shared
         self.eventStore = eventStore
@@ -226,7 +238,12 @@ final class AppCoordinator: ObservableObject {
             await retryAuthorization(binding)
         case .web(let url, _, _):
             await retryWebDocument(url: url)
-        case .cleanup, .environment, .fullReset, .none:
+        case .environment(let target, let previous, let stage, let progress):
+            guard stage == .cleanup else { return }
+            await performEnvironmentCleanup(target: target, previous: previous, remaining: progress.remaining)
+        case .fullReset(let progress):
+            await performFullReset(remaining: progress.remaining)
+        case .cleanup, .none:
             if case .cleanup(let reason, let next) = presentation.retryContext {
                 await retryBindingCleanup(reason: reason, next: next)
             }
@@ -374,30 +391,125 @@ final class AppCoordinator: ObservableObject {
 
     func switchEnvironment(to newEnvironment: AppEnvironment) async {
         guard canSwitchEnvironment, !isTransitioning, environment != newEnvironment else { return }
-        let shouldClearClientState = environment.databaseScope != newEnvironment.databaseScope
-        let previousEnvironment = environment
+        let previous = environment
+        let needsCleanup = previous.databaseScope != newEnvironment.databaseScope
         isTransitioning = true
-        closeCurrentWebSession()
-        if shouldClearClientState {
-            await clearClientState()
+        await beginNewScenarioAndStopSession()
+        if needsCleanup {
+            await closeForOwnedCleanup()
+            let progress = await ownedClientDataCleaner.clean(remaining: OwnedClientDataCleaner.allCategories)
+            guard progress.remaining.isEmpty else {
+                isTransitioning = false
+                screen = .error(.retryable(Self.cleanupFailure(progress), context: .environment(
+                    target: newEnvironment, previous: previous, stage: .cleanup, progress: progress
+                )))
+                return
+            }
         }
-        environment = newEnvironment
-        isTransitioning = false
-        eventStore.record(category: "environment.changed", fields: [
-            "from": previousEnvironment.rawValue,
-            "to": newEnvironment.rawValue,
-            "clientDataCleared": shouldClearClientState
-        ])
+        await applyEnvironment(newEnvironment, previous: previous, didClearClientData: needsCleanup)
     }
 
     func resetClientData() async {
         guard !isTransitioning else { return }
+        await performFullReset(remaining: OwnedClientDataCleaner.allCategories)
+    }
+
+    private func performFullReset(remaining: Set<OwnedDataCategory>) async {
         isTransitioning = true
-        eventStore.record(category: "clientData.reset.started")
-        closeCurrentWebSession()
-        await clearClientState()
+        eventStore.suspendWrites()
+        await beginNewScenarioAndStopSession()
+        await closeForOwnedCleanup()
+        screen = .logo
+        canCancelAuthorization = false
+
+        let progress = await ownedClientDataCleaner.clean(remaining: remaining)
+        guard progress.remaining.isEmpty else {
+            isTransitioning = false
+            screen = .error(.retryable(Self.cleanupFailure(progress), context: .fullReset(progress)))
+            return
+        }
+
+        eventStore.resumeWrites()
         isTransitioning = false
+        restoreAfterCleanup = nil
+        restoreAfterCleanupFailure = nil
         eventStore.record(category: "clientData.reset.finished")
+        await startNewRestoreScenario()
+    }
+
+    private func performEnvironmentCleanup(
+        target: AppEnvironment,
+        previous: AppEnvironment,
+        remaining: Set<OwnedDataCategory>
+    ) async {
+        guard !isTransitioning, environment == previous else { return }
+        isTransitioning = true
+        await closeForOwnedCleanup()
+        let progress = await ownedClientDataCleaner.clean(remaining: remaining)
+        guard progress.remaining.isEmpty else {
+            isTransitioning = false
+            screen = .error(.retryable(Self.cleanupFailure(progress), context: .environment(
+                target: target, previous: previous, stage: .cleanup, progress: progress
+            )))
+            return
+        }
+        await applyEnvironment(target, previous: previous, didClearClientData: true)
+    }
+
+    private func beginNewScenarioAndStopSession() async {
+        cameraScanIntentID = nil
+        didConsumeCameraResult = false
+        canCancelAuthorization = false
+        activeScenarioID = UUID()
+        didReceiveFirstFrame = false
+        restoredBinding = nil
+        await sessionManager.stopAndWait()
+    }
+
+    private func closeForOwnedCleanup() async {
+#if DEBUG
+        let mailbox = diagnosticMailbox
+        mailbox?.stop()
+        closeCurrentWebSession()
+        await mailbox?.waitUntilStopped()
+#else
+        closeCurrentWebSession()
+#endif
+    }
+
+    private func applyEnvironment(
+        _ target: AppEnvironment,
+        previous: AppEnvironment,
+        didClearClientData: Bool
+    ) async {
+        closeCurrentWebSession()
+        if !usesInjectedSessionManager {
+            managerSubscription?.cancel()
+            sessionManager = sessionManagerFactory(target)
+            managerSubscription = sessionManager.subscribe { [weak self] event in
+                self?.sessionManagerDidEmit(event)
+            }
+            backgroundExecution = BackgroundExecution(sessionManager: sessionManager)
+            sessionManager.setActive(isActive)
+        }
+        environment = target
+        isTransitioning = false
+        activeScenarioID = UUID()
+        screen = .logo
+        eventStore.record(category: "environment.changed", fields: [
+            "from": previous.rawValue,
+            "to": target.rawValue,
+            "clientDataCleared": didClearClientData
+        ])
+        await startNewRestoreScenario()
+    }
+
+    private static func cleanupFailure(_ progress: OwnedCleanupProgress) -> AuthFailure {
+        let failure = progress.failures.values.first
+        return failure ?? AuthFailure(
+            kind: .local, stage: .storage, attemptId: UUID(),
+            message: "Application data cleanup is incomplete.", diagnosticCode: "CLEANUP"
+        )
     }
 
     func closeCurrentWebSession() {
@@ -434,17 +546,4 @@ final class AppCoordinator: ObservableObject {
         ])
     }
 
-    private static func clearOwnedClientState() async {
-        await withCheckedContinuation { continuation in
-            WKWebsiteDataStore.default().removeData(
-                ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
-                modifiedSince: .distantPast
-            ) {
-                continuation.resume()
-            }
-        }
-        if let bundleIdentifier = Bundle.main.bundleIdentifier {
-            UserDefaults.standard.removePersistentDomain(forName: bundleIdentifier)
-        }
-    }
 }

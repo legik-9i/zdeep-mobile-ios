@@ -130,7 +130,7 @@ enum RetryContext: Equatable {
     case authorization(RegisteredBinding)
     case web(url: URL, bindingId: UUID, reason: WebPreparationReason)
     case cleanup(reason: LocalResetReason, next: CleanupNextStep)
-    case environment(target: AppEnvironment, previous: AppEnvironment, stage: EnvironmentSwitchStage)
+    case environment(target: AppEnvironment, previous: AppEnvironment, stage: EnvironmentSwitchStage, progress: OwnedCleanupProgress)
     case fullReset(OwnedCleanupProgress)
 }
 

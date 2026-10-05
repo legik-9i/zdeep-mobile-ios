@@ -44,7 +44,59 @@ struct DiagnosticMailboxLaunchTests {
         #expect(!coordinator.isWebViewOpen)
         #expect(manager.updateCount == 0)
     }
+
+    @MainActor
+    @Test func preparedDiagnosticSessionPublishesHandshakeAndResetClosesMailboxBeforeCleanup() async throws {
+        let manager = DiagnosticLaunchSessionManager()
+        let handshake = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ZdeepDiagnostics/session.json")
+        try? FileManager.default.removeItem(at: handshake)
+        let filesAdapter = DiagnosticCleanupProbe { !FileManager.default.fileExists(atPath: handshake.path) }
+        let adapters: [OwnedDataCategory: any OwnedDataCategoryCleaning] = [
+            .keychain: DiagnosticCleanupProbe(),
+            .files: filesAdapter,
+            .preferences: DiagnosticCleanupProbe(),
+            .webData: DiagnosticCleanupProbe()
+        ]
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(
+                arguments: ["--environment", "local", "--usb-diagnostics", "--web-url", "http://127.0.0.1:1"],
+                variables: [:]
+            ),
+            bindingStore: DiagnosticLaunchBindingStore(),
+            sessionManager: manager,
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
+        )
+        await coordinator.start()
+        if let scenarioID = coordinator.activeScenarioID { coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID) }
+
+        let prepared = try #require(coordinator.activeWebSession)
+        let statusData = try await waitForHandshake(at: handshake, sessionID: prepared.id.uuidString.lowercased())
+        let status = try JSONSerialization.jsonObject(with: statusData) as? [String: Any]
+        #expect(status?["ready"] as? Bool == true)
+        #expect(!coordinator.isWebViewOpen)
+
+        await coordinator.resetClientData()
+
+        #expect(prepared.isClosed)
+        #expect(await filesAdapter.probePassed)
+    }
+
+    private func waitForHandshake(at url: URL, sessionID: String) async throws -> Data {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while ContinuousClock.now < deadline {
+            if let data = try? Data(contentsOf: url),
+               let status = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               status["sessionId"] as? String == sessionID {
+                return data
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw DiagnosticMailboxLaunchTestError.handshakeTimedOut
+    }
 }
+
+private enum DiagnosticMailboxLaunchTestError: Error { case handshakeTimedOut }
 
 @MainActor
 private final class DiagnosticLaunchWebSessionFactory: WebSessionFactory {
@@ -63,7 +115,16 @@ private final class DiagnosticLaunchWebSession: WebSessionHandle, ObservableObje
     var currentURL: URL? { nil }
     var isLoading = false
     var navigationError: String? { nil }
-    func close() {}
+    private(set) var closeCount = 0
+    func close() { closeCount += 1 }
+}
+
+private actor DiagnosticCleanupProbe: OwnedDataCategoryCleaning {
+    private let check: (@Sendable () -> Bool)?
+    private(set) var probePassed = false
+    init(check: (@Sendable () -> Bool)? = nil) { self.check = check }
+    func clean() async throws { if let check { probePassed = check() } }
+    func isEmpty() async throws -> Bool { probePassed || check == nil }
 }
 
 private struct DiagnosticLaunchBindingStore: BindingStoring {
