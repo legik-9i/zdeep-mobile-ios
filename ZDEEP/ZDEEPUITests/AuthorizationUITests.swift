@@ -13,6 +13,10 @@ final class AuthorizationUITests: XCTestCase {
         scan.tap()
 
         XCTAssertTrue(app.staticTexts["Доступ к камере запрещён"].waitForExistence(timeout: 5))
+        let errorScreenshot = XCTAttachment(screenshot: app.screenshot())
+        errorScreenshot.name = "authorization-camera-denied-local"
+        errorScreenshot.lifetime = .keepAlways
+        add(errorScreenshot)
         app.buttons["Назад"].tap()
 
         XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
