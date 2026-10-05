@@ -107,6 +107,7 @@ final class AppCoordinator: ObservableObject {
 
     var canSwitchEnvironment: Bool {
         if case .error(.retryable(_, context: .fullReset)) = screen { return false }
+        if case .error(.retryable(_, context: .environment)) = screen { return false }
         return true
     }
 

@@ -59,6 +59,26 @@ Integration reset оставил в Simulator log невлияющие пред�
 | Полный unit suite | PASS, 202 теста, 0 failures | `.artifacts/runs/20261005-124056-1791193256095494000/Tests.xcresult` |
 | Полный WebKit integration suite | PASS, 26 тестов, 0 failures | `.artifacts/runs/20261005-124123-1791193283689169000/Tests.xcresult` |
 | Полный UI suite | PASS, 22 теста, 0 failures | `.artifacts/runs/20261005-124227-1791193347872337000/Tests.xcresult` |
-| Release Simulator build | PASS | `.artifacts/release-build-remediation/Build/Products/Release-iphonesimulator/ZDEEP.app` |
+| Release Simulator build | PASS | `.artifacts/release-build-final-review/Build/Products/Release-iphonesimulator/ZDEEP.app` |
 
 После dynamic eligibility изменения Release executable повторно проверен `nm -a` и binary marker scan: символы и маркеры `DiagnosticExecutor`, `DebugPanel`, `DiagnosticMailbox` отсутствуют. `git diff --check` прошёл.
+
+## Проверка test fixture безопасности и финальная матрица
+
+Review выявил, что предыдущий focused prod-mailbox тест возвращал настоящий `WebSession`. Хотя factory задавал ему trusted URL на loopback, coordinator отдельно передавал в `load(url:)` `endpoints.web` целевой environment; для `.prod` это могло обратиться к production URL. Предыдущий GREEN bundle `.artifacts/runs/20261005-124031-1791193231575885000/Tests.xcresult` поэтому не засчитывается как доказательство для этого контракта.
+
+Fixture заменён на fake `WebSessionHandle`, у которого нет пути к `WebSession.load`. Проверка напрямую подтверждает opt-in для исходной local environment и запрет для целевой prod environment, а также отсутствие diagnostic handshake. Targeted test прошёл: `.artifacts/runs/20261005-125342-1791194022954943000/Tests.xcresult`. Ни один `.test`/`.prod` URL этим сценарием не загружается.
+
+Дополнительный Sol Important предотвращает обход незавершённой environment cleanup другим same-scope switch. Его regression test и явный retry прошли: `.artifacts/runs/20261005-125323-1791194003224623000/Tests.xcresult`.
+
+После замены fixture заново пройдена полная local матрица на Simulator `0DDEE416-EECF-4BF3-8F15-BA93A980033A`:
+
+| Проверка | Результат | xcresult |
+|---|---:|---|
+| Полный unit suite | PASS, 203 теста, 0 failures | `.artifacts/runs/20261005-125411-1791194051854460000/Tests.xcresult` |
+| Полный WebKit integration suite | PASS, 26 тестов, 0 failures | `.artifacts/runs/20261005-125441-1791194081853561000/Tests.xcresult` |
+| Полный UI suite | PASS, 22 теста, 0 failures | `.artifacts/runs/20261005-125549-1791194149647043000/Tests.xcresult` |
+
+Финальный UI suite собран и запущен после изменения fixture; оба `DiagnosticMailboxUITests` прошли. `git diff --check` прошёл.
+
+После Sol guard change `canSwitchEnvironment` повторно выполнен Release Simulator build (build only) по пути `.artifacts/release-build-final-review/Build/Products/Release-iphonesimulator/ZDEEP.app`; `nm -a` и binary marker scan снова не нашли `DiagnosticExecutor`, `DebugPanel` или `DiagnosticMailbox`.

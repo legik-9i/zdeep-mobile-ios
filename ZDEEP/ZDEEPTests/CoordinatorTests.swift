@@ -1022,6 +1022,52 @@ struct CoordinatorTests {
         }
     }
 
+    @Test func test_failed_environment_cleanup_cannot_be_bypassed_by_same_scope_switch() async {
+        let adapters = Self.makeOwnedDataAdapters(failing: .keychain)
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "fixture")
+        let manager = CoordinatorSessionManager()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "test"], variables: [:]),
+            bindingStore: CoordinatorBindingStore(result: .success(binding)),
+            sessionManager: manager,
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
+        )
+
+        await coordinator.switchEnvironment(to: .local)
+        guard case .error(.retryable(_, context: .environment(
+            let target, let previous, .cleanup, let progress
+        ))) = coordinator.screen else {
+            Issue.record("Failed environment cleanup must retain its retry context")
+            return
+        }
+        #expect(target == .local)
+        #expect(previous == .test)
+        #expect(progress.remaining == [.keychain])
+        #expect(coordinator.environment == .test)
+
+        await coordinator.switchEnvironment(to: .prod)
+
+        #expect(coordinator.environment == .test)
+        #expect(!coordinator.canSwitchEnvironment)
+        #expect(manager.updateCount == 0)
+        guard case .error(.retryable(_, context: .environment(
+            let pendingTarget, let pendingPrevious, .cleanup, let pendingProgress
+        ))) = coordinator.screen else {
+            Issue.record("Same-scope switch must not discard pending environment cleanup")
+            return
+        }
+        #expect(pendingTarget == .local)
+        #expect(pendingPrevious == .test)
+        #expect(pendingProgress.remaining == [.keychain])
+        #expect(await (adapters[.keychain] as! CoordinatorOwnedDataAdapter).cleanCount == 1)
+
+        await coordinator.retry()
+
+        #expect(coordinator.environment == .local)
+        #expect(await (adapters[.keychain] as! CoordinatorOwnedDataAdapter).cleanCount == 2)
+        #expect(manager.updateCount == 1)
+    }
+
     private static func fixtureSession() -> AuthSession {
         AuthSession(accessToken: "fixture-jwt", userId: "user", carId: "car", expiresAt: "later",
                     deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID())
