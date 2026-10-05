@@ -57,3 +57,39 @@ Focused UI подтверждение welcome + hidden prepared WebView: `ZDEEPU
 - `.artifacts/runs/20261005-064543-1791171943540943000/Tests.xcresult` — focused UI RED до disabled gating; assertion ожидала неактивную кнопку, затем process завис на финализации. Не считать завершённым bundle.
 
 Токены и тела auth-запросов в отчёт/исходники не включались. Fixture значения синтетические.
+
+## Remediation после Sol review
+
+Исправлены пять Important замечаний и Minor замечание. Task 10 не начинал. Код и проверки — только на локальном Simulator; test/prod и физические устройства не запускались.
+
+### RED → GREEN
+
+1. **Сброс gate первого native frame при новом restore.** Регрессия `test_restore_retry_resets_native_frame_gate`: RED подтвердил, что после retry новый scenario не создавал WebSession; bundle `.artifacts/runs/20261005-071559-1791173759415037000/Tests.xcresult`. GREEN 1/1 после сброса gate в `startNewRestoreScenario`: `.artifacts/runs/20261005-071659-1791173819384457000/Tests.xcresult`.
+2. **Не скрывать активный WebView при session expiry.** Регрессия `test_session_expiry_keeps_visible_web_session_open`: RED показал переключение экрана в error при активном WebView; промежуточный bundle неполный `.artifacts/runs/20261005-071906-1791173946616475000/Tests.xcresult`. GREEN 1/1 после раннего guard при открытом WebView: `.artifacts/runs/20261005-072025-1791174025107055000/Tests.xcresult`. Отдельный integration bridge test сохраняет передачу `sessionExpired` в документ.
+3. **Reset/rebind не показывают ложный welcome.** Добавлена транзакция reset → restore; welcome выставляется только после успешного reset и `restore() == nil`. Перед storage side effects инвалидируется scenario, закрывается WebSession и останавливается session manager. Ошибка reset или повторного restore остаётся actionable cleanup error; Retry запускает ту же защищённую транзакцию. Обе UI actions подключены к этому пути. RED — test compile выявил отсутствующий `resetBindingAndShowWelcome()` (`CoordinatorTests.swift:226`); первый focused run также поймал неверное ожидание старого scenario UUID, заменённое на assertion cleanup error. GREEN: reset failure 1/1 `.artifacts/runs/20261005-072826-1791174506834704000/Tests.xcresult`, reset + пустой повторный restore 1/1 `.artifacts/runs/20261005-072846-1791174526828474000/Tests.xcresult`, ошибка post-reset restore без welcome 1/1 `.artifacts/runs/20261005-072946-1791174586203336000/Tests.xcresult`.
+4. **Сверка carId при WEB_READY.** `test_web_ready_rejects_session_for_different_car` подтвердил RED: другая машина принималась и WebView раскрывался; bundle `.artifacts/runs/20261005-072112-1791174072260494000/Tests.xcresult` неполный после тестового вывода. GREEN 1/1 после проверки `session.carId == binding.carId`: `.artifacts/runs/20261005-072208-1791174128475102000/Tests.xcresult`.
+5. **Смена environment закрыта до пересоздания AuthClient/SessionManager.** Новая fake-manager regression проверяет, что после попытки переключения остаются исходные environment/endpoints, нет clear или auth calls, а DebugPanel picker disabled. RED: четыре assertion failures при переключении на test, включая вызов очистки и изменение endpoint — `.artifacts/runs/20261005-073103-1791174663202470000/Tests.xcresult`. GREEN 1/1 после capability guard: `.artifacts/runs/20261005-073225-1791174745687459000/Tests.xcresult`. Rebuild для выбора другого контура остаётся будущей задачей.
+6. **Фактический статус WebView в DebugPanel.** Тест покрывает состояние prepared до `acceptWebReady` и visible после reveal того же подготовленного объекта. RED compile выявил, что `webViewState` был private и не отражал `isWebViewOpen`; повторная сборка подтвердила точный диагностический текст. GREEN 1/1: `.artifacts/runs/20261005-073439-1791174879960450000/Tests.xcresult`.
+
+Полный Coordinator class run `.artifacts/runs/20261005-073502-1791174902656972000/Tests.xcresult` показывает 23/23 passed. Команда с `--only CoordinatorTests` вернула wrapper status 1 только из-за требования wrapper выбирать ровно один node ID; сами тесты завершились успешно.
+
+### Проверки remediation
+
+Все Simulator запуски использовали iPhone 18 Pro `0DDEE416-EECF-4BF3-8F15-BA93A980033A` и `--environment local`.
+
+| Команда | Результат | Bundle |
+|---|---:|---|
+| `python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` | 152/152 | `.artifacts/runs/20261005-074007-1791175207994603000/Tests.xcresult` |
+| `python3 scripts/zdeep.py test --environment local --suite ui --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` | 18/18 | `.artifacts/runs/20261005-074125-1791175285497644000/Tests.xcresult` |
+| `python3 scripts/zdeep.py test --environment local --suite integration --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` | 25/25 | `.artifacts/runs/20261005-074029-1791175229595794000/Tests.xcresult` |
+| `python3 scripts/zdeep.py test --environment local --suite all --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` | 195/195 | `.artifacts/runs/20261005-073536-1791174936856535000/Tests.xcresult` |
+| `python3 -m unittest discover -s scripts/tests` | 34/34 | — |
+| `git diff --check` | PASS | — |
+
+Для отдельного UI/integration и `all` local preflight `/health` ответил HTTP 200. Все перечисленные полные bundles прошли с 0 failures и 0 skipped.
+
+### Неполные RED bundles
+
+Следующие bundle использовались только для диагностического RED вывода и не засчитываются как завершённые test runs: session expiry `.artifacts/runs/20261005-071906-1791173946616475000/Tests.xcresult`, carId mismatch `.artifacts/runs/20261005-072112-1791174072260494000/Tests.xcresult`. Неудачный reset assertion `.artifacts/runs/20261005-072735-1791174455085921000/Tests.xcresult` был промежуточным run при исправлении ожидания scenario invalidation; завершённые reset GREEN bundles перечислены выше.
+
+Неудачная обычная sandbox попытка RED test build завершилась до разрешения CodeScanner и соединения с CoreSimulatorService; повтор с разрешённым Simulator доступом дал описанный compile-time RED. Токены и auth request/response bodies в код и отчёт не добавлялись.

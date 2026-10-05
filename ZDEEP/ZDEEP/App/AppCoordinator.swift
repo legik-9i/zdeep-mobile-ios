@@ -62,6 +62,8 @@ final class AppCoordinator: ObservableObject {
 
     var preparedWebSessionID: UUID? { webSession?.id }
 
+    var canSwitchEnvironment: Bool { false }
+
     init(
         configuration: LaunchConfiguration? = nil,
         sessionFactory: (any WebSessionFactory)? = nil,
@@ -133,6 +135,36 @@ final class AppCoordinator: ObservableObject {
         screen = .welcome
     }
 
+    func resetBindingAndShowWelcome() async {
+        guard !isTransitioning else { return }
+        isTransitioning = true
+        activeScenarioID = UUID()
+        didReceiveFirstFrame = false
+        closeCurrentWebSession()
+        sessionManager.stop()
+        screen = .loading
+        do {
+            try await bindingStore.reset()
+            guard try await bindingStore.restore() == nil else {
+                throw BindingStoreError.invalidRecord
+            }
+            restoredBinding = nil
+            activeScenarioID = UUID()
+            screen = .welcome
+        } catch {
+            let failure = AuthFailure(
+                kind: .local, stage: .storage, attemptId: UUID(),
+                message: "Binding cleanup failed", diagnosticCode: "KEYCHAIN"
+            )
+            activeScenarioID = UUID()
+            screen = .error(.retryable(
+                failure,
+                context: .cleanup(reason: .rebind, next: .restoreThenWelcome)
+            ))
+        }
+        isTransitioning = false
+    }
+
     func nativeFirstFrameDidRender(scenarioID: UUID) {
         guard activeScenarioID == scenarioID, !didReceiveFirstFrame else { return }
         didReceiveFirstFrame = true
@@ -165,7 +197,9 @@ final class AppCoordinator: ObservableObject {
             screen = .loading
             activeWebSession.load(url: url)
         case .cleanup, .environment, .fullReset, .none:
-            break
+            if case .cleanup = presentation.retryContext {
+                await resetBindingAndShowWelcome()
+            }
         }
     }
 
@@ -194,6 +228,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func startNewRestoreScenario() async {
+        didReceiveFirstFrame = false
         do {
             restoredBinding = try await bindingStore.restore()
             let scenario = UUID()
@@ -255,6 +290,7 @@ final class AppCoordinator: ObservableObject {
 
     private func sessionManagerDidEmit(_ event: SessionManagerEvent) {
         if case .sessionExpired(let failure) = event, let failure, restoredBinding != nil {
+            guard !isWebViewOpen else { return }
             screen = .error(.retryable(failure, context: .authorization(restoredBinding!)))
         }
     }
@@ -281,8 +317,9 @@ final class AppCoordinator: ObservableObject {
         guard isActive, activeScenarioID == scenarioID,
               webSession?.id == identity.containerId,
               currentCommittedDocument == identity,
-              restoredBinding != nil,
-              sessionManager.currentSession != nil else {
+              let binding = restoredBinding,
+              let session = sessionManager.currentSession,
+              session.carId == binding.carId else {
             throw AuthFailure(kind: .local, stage: .web, attemptId: identity.attemptId, message: "Web session is not ready", diagnosticCode: "WEB_READY")
         }
         acceptedReadyDocument = identity
@@ -297,7 +334,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     func switchEnvironment(to newEnvironment: AppEnvironment) async {
-        guard !isTransitioning, environment != newEnvironment else { return }
+        guard canSwitchEnvironment, !isTransitioning, environment != newEnvironment else { return }
         let shouldClearClientState = environment.databaseScope != newEnvironment.databaseScope
         let previousEnvironment = environment
         isTransitioning = true

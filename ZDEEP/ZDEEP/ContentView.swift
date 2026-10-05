@@ -39,8 +39,8 @@ struct ContentView: View {
                 NativeErrorView(
                     presentation: presentation,
                     onRetry: { Task { await coordinator.retry() } },
-                    onStartOver: { Task { await coordinator.startNewWelcomeScenario() } },
-                    onRebind: { Task { await coordinator.startNewWelcomeScenario() } }
+                    onStartOver: { Task { await coordinator.resetBindingAndShowWelcome() } },
+                    onRebind: { Task { await coordinator.resetBindingAndShowWelcome() } }
                 )
             }
             if coordinator.screen != .logo, let scenarioID = coordinator.activeScenarioID {

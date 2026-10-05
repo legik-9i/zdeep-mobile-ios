@@ -115,13 +115,23 @@ struct DebugPanel: View {
     }
 
     var isEnvironmentPickerEnabled: Bool {
-        !coordinator.isTransitioning
+        coordinator.canSwitchEnvironment && !coordinator.isTransitioning
     }
 
     private var webViewState: String {
-        guard let session = coordinator.activeWebSession else { return "Закрыт" }
-        if session.isLoading { return "Загрузка (скрыт)" }
-        if session.navigationError != nil { return "Ошибка (скрыт)" }
+        Self.webViewState(
+            isOpen: coordinator.isWebViewOpen,
+            isPrepared: coordinator.isWebPrepared,
+            isLoading: coordinator.activeWebSession?.isLoading ?? false,
+            hasError: coordinator.activeWebSession?.navigationError != nil
+        )
+    }
+
+    static func webViewState(isOpen: Bool, isPrepared: Bool, isLoading: Bool, hasError: Bool) -> String {
+        guard isPrepared else { return "Закрыт" }
+        if isOpen { return "Открыт" }
+        if isLoading { return "Загрузка (скрыт)" }
+        if hasError { return "Ошибка (скрыт)" }
         return "Подготовлен (скрыт)"
     }
 
