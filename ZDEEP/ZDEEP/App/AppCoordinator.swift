@@ -29,23 +29,31 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var environment: AppEnvironment
     @Published private(set) var isWebViewOpen = false
     @Published private(set) var isWebPrepared = false
-    @Published private(set) var screen: AppScreen = .logo
-    @Published private(set) var isTransitioning = false
+    @Published var screen: AppScreen = .logo
+    @Published var isTransitioning = false
+    @Published var canCancelAuthorization = false
     @Published private(set) var activeWebSession: WebSession?
     @Published private(set) var sessionStateRevision = 0
 
-    private let configuration: LaunchConfiguration
+    let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
     private let clearClientState: () async -> Void
     private let eventStore: DiagnosticEventStore
-    private let bindingStore: any BindingStoring
-    private let sessionManager: any SessionManaging
+    let bindingStore: any BindingStoring
+    let sessionManager: any SessionManaging
+    let cameraPermission: any CameraPermissionProviding
     private let backgroundExecution: BackgroundExecution
-    @Published private(set) var activeScenarioID: UUID?
+    @Published var activeScenarioID: UUID?
     private var isActive = true
     private var didStart = false
-    private var didReceiveFirstFrame = false
-    private var restoredBinding: RegisteredBinding?
+    var didReceiveFirstFrame = false
+    var restoredBinding: RegisteredBinding?
+    var cameraScanIntentID: UUID?
+    var didConsumeCameraResult = false
+    var restoreAfterCleanup: CleanupNextStep?
+#if DEBUG && targetEnvironment(simulator)
+    var syntheticAuthorizationUITestEnabled = false
+#endif
     private var managerSubscription: (any CancellationHandle)?
     private var nativeBridge: NativeBridge?
     private var acceptedReadyDocument: WebDocumentIdentity?
@@ -70,7 +78,8 @@ final class AppCoordinator: ObservableObject {
         bindingStore: (any BindingStoring)? = nil,
         sessionManager: (any SessionManaging)? = nil,
         clearClientState: (() async -> Void)? = nil,
-        eventStore: DiagnosticEventStore? = nil
+        eventStore: DiagnosticEventStore? = nil,
+        cameraPermission: (any CameraPermissionProviding)? = nil
     ) {
         let configuration = configuration ?? .current
         self.configuration = configuration
@@ -79,6 +88,7 @@ final class AppCoordinator: ObservableObject {
         self.clearClientState = clearClientState ?? Self.clearOwnedClientState
         let store = bindingStore ?? BindingStore()
         self.bindingStore = store
+        self.cameraPermission = cameraPermission ?? SystemCameraPermissionProvider()
         let clock = ContinuousSessionClock()
         let authClient = AuthClient(
             bindingStore: store, transport: URLSessionAuthHTTPTransport(), clock: clock,
@@ -129,6 +139,9 @@ final class AppCoordinator: ObservableObject {
 
     func startNewWelcomeScenario() async {
         closeCurrentWebSession()
+        cameraScanIntentID = nil
+        didConsumeCameraResult = false
+        canCancelAuthorization = false
         restoredBinding = nil
         didReceiveFirstFrame = false
         activeScenarioID = UUID()
@@ -138,37 +151,6 @@ final class AppCoordinator: ObservableObject {
     func startOverAfterError(_ presentation: NativeErrorPresentation) async {
         guard case .initialRegistrationFailure = presentation else { return }
         await startNewWelcomeScenario()
-    }
-
-    func resetBindingAndShowWelcome() async {
-        guard !isTransitioning else { return }
-        isTransitioning = true
-        defer { isTransitioning = false }
-        activeScenarioID = UUID()
-        didReceiveFirstFrame = false
-        closeCurrentWebSession()
-        sessionManager.stop()
-        screen = .loading
-
-        do {
-            try await bindingStore.reset()
-        } catch {
-            showBindingCleanupError()
-            return
-        }
-
-        do {
-            guard try await bindingStore.restore() == nil else {
-                showBindingCleanupError()
-                return
-            }
-            restoredBinding = nil
-            activeScenarioID = UUID()
-            screen = .welcome
-        } catch {
-            activeScenarioID = UUID()
-            screen = .error(.retryable(Self.restoreFailure(error), context: .restore))
-        }
     }
 
     func nativeFirstFrameDidRender(scenarioID: UUID) {
@@ -187,6 +169,7 @@ final class AppCoordinator: ObservableObject {
         if active { diagnosticMailbox?.start() } else { diagnosticMailbox?.stop() }
 #endif
         if active, didReceiveFirstFrame, webSession == nil, canPrepareWebSession { prepareWebSession() }
+        if active { Task { await cameraPermissionDidReturn() } }
     }
 
     func retry() async {
@@ -203,8 +186,8 @@ final class AppCoordinator: ObservableObject {
             screen = .loading
             activeWebSession.load(url: url)
         case .cleanup, .environment, .fullReset, .none:
-            if case .cleanup = presentation.retryContext {
-                await resetBindingAndShowWelcome()
+            if case .cleanup(let reason, let next) = presentation.retryContext {
+                await retryBindingCleanup(reason: reason, next: next)
             }
         }
     }
@@ -233,7 +216,7 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    private func startNewRestoreScenario() async {
+    func startNewRestoreScenario() async {
         didReceiveFirstFrame = false
         do {
             restoredBinding = try await bindingStore.restore()
@@ -243,15 +226,22 @@ final class AppCoordinator: ObservableObject {
                 screen = .loading
                 await refresh(binding)
             } else {
-                screen = .welcome
+                if case .showRegistrationError(let failure) = restoreAfterCleanup {
+                    restoreAfterCleanup = nil
+                    screen = .error(.initialRegistrationFailure(failure))
+                } else {
+                    restoreAfterCleanup = nil
+                    screen = .welcome
+                }
             }
         } catch {
             activeScenarioID = UUID()
+            canCancelAuthorization = false
             screen = .error(.retryable(Self.restoreFailure(error), context: .restore))
         }
     }
 
-    private func prepareWebSession() {
+    func prepareWebSession() {
         guard isActive, !isTransitioning, webSession == nil, canPrepareWebSession,
               let scenario = activeScenarioID else { return }
         let session = sessionFactory.makeSession(for: environment, endpoints: endpoints)
@@ -285,8 +275,12 @@ final class AppCoordinator: ObservableObject {
 
     private var canPrepareWebSession: Bool {
         switch screen {
-        case .welcome, .loading, .web:
+        case .welcome, .web:
             true
+        case .loading:
+            restoredBinding != nil
+        case .scanner, .cameraPermissionDenied, .cameraPermissionRestricted:
+            false
         case .error(let presentation):
             switch presentation.retryContext {
             case .restore, .cleanup: false
@@ -338,20 +332,8 @@ final class AppCoordinator: ObservableObject {
         eventStore.record(category: "webview.opened", operationID: identity.containerId.uuidString)
     }
 
-    private static func restoreFailure(_ error: Error) -> AuthFailure {
+    static func restoreFailure(_ error: Error) -> AuthFailure {
         AuthFailure(kind: .local, stage: .storage, attemptId: UUID(), message: String(describing: error), diagnosticCode: "KEYCHAIN")
-    }
-
-    private func showBindingCleanupError() {
-        let failure = AuthFailure(
-            kind: .local, stage: .storage, attemptId: UUID(),
-            message: "Binding cleanup failed", diagnosticCode: "KEYCHAIN"
-        )
-        activeScenarioID = UUID()
-        screen = .error(.retryable(
-            failure,
-            context: .cleanup(reason: .rebind, next: .restoreThenWelcome)
-        ))
     }
 
     func switchEnvironment(to newEnvironment: AppEnvironment) async {
@@ -382,7 +364,7 @@ final class AppCoordinator: ObservableObject {
         eventStore.record(category: "clientData.reset.finished")
     }
 
-    private func closeCurrentWebSession() {
+    func closeCurrentWebSession() {
 #if DEBUG
         diagnosticMailbox?.stop()
         diagnosticMailbox = nil

@@ -14,6 +14,8 @@ struct ZDEEPApp: App {
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.environment["ZDEEP_PASSIVE_TEST_HOST"] == "1" {
                 PassiveHostedTestRoot()
+            } else if let scenario = AuthorizationUITestHost.scenario(arguments: ProcessInfo.processInfo.arguments) {
+                AuthorizationUITestHost(scenario: scenario)
             } else if let fixture = SessionUITestFixture.configuration(arguments: ProcessInfo.processInfo.arguments) {
                 SessionUITestFixture(configuration: fixture)
             } else {

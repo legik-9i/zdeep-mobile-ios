@@ -3,6 +3,9 @@ import Foundation
 enum AppScreen: Equatable {
     case logo
     case welcome
+    case scanner
+    case cameraPermissionDenied
+    case cameraPermissionRestricted
     case loading
     case web
     case error(NativeErrorPresentation)

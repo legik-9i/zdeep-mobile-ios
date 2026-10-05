@@ -1,10 +1,343 @@
 import Foundation
 import Combine
+import AVFoundation
 import Testing
 @testable import ZDEEP
 
 @MainActor
 struct CoordinatorTests {
+    private static let qrURL = "https://example.invalid/auth/get-otp?token=header.eyJjYXJJZCI6InN5bnRoZXRpYy1jYXIifQ.signature"
+
+    @Test func test_camera_permission_is_requested_before_scanner() async {
+        let permission = FakeCameraPermissionProvider(status: .notDetermined, requestResult: true)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager(), cameraPermission: permission
+        )
+        await coordinator.start()
+
+        await coordinator.beginCameraScan()
+
+        #expect(permission.calls == ["status", "request"])
+        #expect(coordinator.screen == .scanner)
+    }
+
+    @Test func test_camera_settings_return_requires_current_scan_intent() async {
+        let permission = FakeCameraPermissionProvider(status: .denied, requestResult: false)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager(), cameraPermission: permission
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+        #expect(coordinator.screen == .cameraPermissionDenied)
+
+        permission.statusValue = .authorized
+        await coordinator.cameraPermissionDidReturn()
+        #expect(coordinator.screen == .scanner)
+
+        coordinator.cancelCameraScan()
+        let requestCount = permission.calls.filter { $0 == "status" }.count
+        await coordinator.cameraPermissionDidReturn()
+        #expect(coordinator.screen == .welcome)
+        #expect(permission.calls.filter { $0 == "status" }.count == requestCount)
+    }
+
+    @Test func test_new_scenario_invalidates_pending_camera_permission_result() async throws {
+        let permission = FakeCameraPermissionProvider(status: .notDetermined, requestResult: true)
+        let requestGate = TestSaveGate()
+        permission.requestGate = requestGate
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager(), cameraPermission: permission
+        )
+        await coordinator.start()
+        let task = Task { await coordinator.beginCameraScan() }
+        await requestGate.waitUntilStarted()
+        await coordinator.startNewWelcomeScenario()
+        await requestGate.resume()
+        await task.value
+
+        #expect(coordinator.screen == .welcome)
+        #expect(coordinator.activeScenarioID != nil)
+    }
+
+    @Test func test_closing_scanner_returns_to_welcome_without_binding() async {
+        let store = RegistrationCoordinatorBindingStore()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: FakeRegistrationSessionManager(bindingStore: store),
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+
+        coordinator.cancelCameraScan()
+
+        #expect(coordinator.screen == .welcome)
+        #expect(store.beginCount == 0)
+        #expect(store.resetCount == 0)
+    }
+
+    @Test func test_stale_scanner_result_after_welcome_is_ignored() async {
+        let store = RegistrationCoordinatorBindingStore()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: manager,
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+        await coordinator.startNewWelcomeScenario()
+
+        await coordinator.scannerDidProduce(Self.qrURL)
+
+        #expect(coordinator.screen == .welcome)
+        #expect(store.beginCount == 0)
+        #expect(manager.registerCount == 0)
+    }
+
+    @Test func test_restricted_camera_permission_has_back_without_settings_return() async {
+        let permission = FakeCameraPermissionProvider(status: .restricted, requestResult: false)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager(), cameraPermission: permission
+        )
+        await coordinator.start()
+
+        await coordinator.beginCameraScan()
+
+        #expect(coordinator.screen == .cameraPermissionRestricted)
+        #expect(permission.calls == ["status"])
+        coordinator.cancelCameraScan()
+        #expect(coordinator.screen == .welcome)
+    }
+
+    @Test func test_one_qr_starts_one_pair_and_complete() async {
+        let store = RegistrationCoordinatorBindingStore()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: manager,
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+        #expect(coordinator.screen == .scanner)
+
+        await coordinator.scannerDidProduce(Self.qrURL)
+        await coordinator.scannerDidProduce(Self.qrURL)
+
+        #expect(coordinator.screen == .loading)
+        #expect(store.beginCount == 1)
+        #expect(manager.registerCount == 1)
+        #expect(store.completeCount == 1)
+        #expect(store.registeredBinding?.carId == "synthetic-car")
+    }
+
+    @Test func test_invalid_qr_returns_start_over_without_beginning_registration() async {
+        let store = RegistrationCoordinatorBindingStore()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: manager,
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+
+        await coordinator.scannerDidProduce("https://example.invalid/not-a-car-qr")
+
+        guard case .error(let presentation) = coordinator.screen else {
+            Issue.record("An unsupported QR must return a start-over error")
+            return
+        }
+        #expect(presentation.actions == [.startOver])
+        #expect(store.beginCount == 0)
+        #expect(manager.registerCount == 0)
+        #expect(store.resetCount == 0)
+    }
+
+    @Test func test_pair_failure_cleans_binding_before_initial_error() async {
+        let failure = AuthFailure(kind: .network, stage: .pair, attemptId: UUID(), message: "fixture", diagnosticCode: "NETWORK")
+        let store = RegistrationCoordinatorBindingStore()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        manager.registrationError = RegistrationFailure(failure: failure, registeredBinding: nil)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: manager,
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+
+        await coordinator.scannerDidProduce(Self.qrURL)
+
+        #expect(store.resetCount == 1)
+        #expect(store.restoreCount == 2)
+        #expect(store.registeredBinding == nil)
+        guard case .error(let presentation) = coordinator.screen else {
+            Issue.record("A pair failure should appear after cleanup")
+            return
+        }
+        #expect(presentation.actions == [.startOver])
+    }
+
+    @Test func test_cleanup_failure_blocks_scanner_and_offers_only_retry() async {
+        let failure = AuthFailure(kind: .network, stage: .pair, attemptId: UUID(), message: "fixture", diagnosticCode: "NETWORK")
+        let store = RegistrationCoordinatorBindingStore(resetFailures: 1)
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        manager.registrationError = RegistrationFailure(failure: failure, registeredBinding: nil)
+        let permission = FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: manager, cameraPermission: permission
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+        await coordinator.scannerDidProduce(Self.qrURL)
+        let permissionCallsBefore = permission.calls.count
+
+        await coordinator.beginCameraScan()
+
+        guard case .error(let presentation) = coordinator.screen else {
+            Issue.record("A failed pending-binding cleanup must block new scanner intents")
+            return
+        }
+        #expect(presentation.actions == [.retry])
+        #expect(permission.calls.count == permissionCallsBefore)
+        #expect(store.beginCount == 1)
+
+        await coordinator.retry()
+
+        #expect(store.resetCount == 2)
+        guard case .error(let initialError) = coordinator.screen else {
+            Issue.record("Successful cleanup retry should then expose the original start-over error")
+            return
+        }
+        #expect(initialError.actions == [.startOver])
+    }
+
+    @Test func test_registered_save_then_expired_jwt_uses_token_retry_without_cleanup() async {
+        let failure = AuthFailure(kind: .timeout, stage: .token, attemptId: UUID(), message: "expired", diagnosticCode: "TIMEOUT")
+        let store = RegistrationCoordinatorBindingStore()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        manager.registrationError = RegistrationFailure(failure: failure, registeredBinding: nil)
+        manager.completeBeforeRegistrationError = true
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: manager,
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+
+        await coordinator.scannerDidProduce(Self.qrURL)
+
+        #expect(store.resetCount == 0)
+        #expect(store.registeredBinding != nil)
+        guard case .error(let presentation) = coordinator.screen else {
+            Issue.record("A saved registration with an expired JWT should preserve the registered authorization error")
+            return
+        }
+        if case .authorization(let retryBinding) = presentation.retryContext {
+            #expect(retryBinding == store.registeredBinding)
+        } else {
+            Issue.record("A saved binding must use the token retry context")
+        }
+    }
+
+    @Test func test_cancel_during_save_cleans_late_registered_result() async throws {
+        let store = RegistrationCoordinatorBindingStore()
+        let saveGate = TestSaveGate()
+        store.saveGate = saveGate
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let factory = FakeWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory, bindingStore: store, sessionManager: manager,
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+        let registration = Task { await coordinator.scannerDidProduce(Self.qrURL) }
+        await saveGate.waitUntilStarted()
+
+        if let scenario = coordinator.activeScenarioID {
+            coordinator.nativeFirstFrameDidRender(scenarioID: scenario)
+        }
+        #expect(factory.sessions.isEmpty)
+
+        await coordinator.cancelAuthorization()
+        await saveGate.resume()
+        await registration.value
+
+        #expect(store.resetCount == 1)
+        #expect(try await store.restore() == nil)
+        #expect(manager.currentSession == nil)
+        #expect(!coordinator.isWebViewOpen)
+        #expect(coordinator.screen == .welcome)
+    }
+
+    @Test func test_cancel_after_jwt_before_reveal_resets_binding() async throws {
+        let store = RegistrationCoordinatorBindingStore()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let factory = FakeWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory, bindingStore: store, sessionManager: manager,
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        let welcomeScenario = try #require(coordinator.activeScenarioID)
+        coordinator.nativeFirstFrameDidRender(scenarioID: welcomeScenario)
+        await coordinator.beginCameraScan()
+        await coordinator.scannerDidProduce(Self.qrURL)
+        let webSession = try #require(factory.sessions.first)
+        let loadingScenario = try #require(coordinator.activeScenarioID)
+        coordinator.nativeFirstFrameDidRender(scenarioID: loadingScenario)
+        let preparedDuringRegistration = try #require(factory.sessions.last)
+
+        await coordinator.cancelAuthorization()
+        #expect(try await store.restore() == nil)
+        #expect(manager.currentSession == nil)
+        #expect(webSession.closeCount == 1)
+        #expect(preparedDuringRegistration.closeCount == 1)
+        #expect(!coordinator.isWebViewOpen)
+        #expect(coordinator.screen == .welcome)
+    }
+
+    @Test func test_marker_failure_after_reset_blocks_welcome_until_restore_retry() async {
+        let store = RegistrationCoordinatorBindingStore(restoreFailuresAfterReset: 1)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: FakeRegistrationSessionManager(bindingStore: store),
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+
+        await coordinator.resetBindingAndShowWelcome()
+
+        #expect(coordinator.screen != .welcome)
+        #expect(store.resetCount == 1)
+        guard case .error(let presentation) = coordinator.screen else {
+            Issue.record("A marker restore failure after reset must keep authorization blocked")
+            return
+        }
+        #expect(presentation.retryContext == .restore)
+
+        await coordinator.retry()
+
+        #expect(coordinator.screen == .welcome)
+        #expect(store.resetCount == 1)
+        #expect(store.restoreCount == 3)
+    }
+
     @Test func test_none_restores_to_welcome() async {
         let bindingStore = CoordinatorBindingStore(result: .success(nil))
         let manager = CoordinatorSessionManager()
@@ -638,6 +971,174 @@ private final class FakeBackgroundTaskProvider: BackgroundTaskProviding {
     }
     func end(_ identifier: UUID) { endCount += 1 }
     func expire() { expiration?() }
+}
+
+@MainActor
+private final class FakeCameraPermissionProvider: CameraPermissionProviding {
+    var statusValue: AVAuthorizationStatus
+    let requestResult: Bool
+    var requestGate: TestSaveGate?
+    private(set) var calls: [String] = []
+
+    init(status: AVAuthorizationStatus, requestResult: Bool) {
+        statusValue = status
+        self.requestResult = requestResult
+    }
+
+    func status() -> AVAuthorizationStatus {
+        calls.append("status")
+        return statusValue
+    }
+
+    func requestAccess() async -> Bool {
+        calls.append("request")
+        await requestGate?.wait()
+        return requestResult
+    }
+}
+
+private final class RegistrationCoordinatorBindingStore: BindingStoring, @unchecked Sendable {
+    private var pending: PendingBinding?
+    private(set) var registeredBinding: RegisteredBinding?
+    private(set) var beginCount = 0
+    private(set) var completeCount = 0
+    private(set) var resetCount = 0
+    private(set) var restoreCount = 0
+    private var resetFailures: Int
+    private var restoreFailuresAfterReset: Int
+    private var hasReset = false
+    var saveGate: TestSaveGate?
+
+    init(resetFailures: Int = 0, restoreFailuresAfterReset: Int = 0) {
+        self.resetFailures = resetFailures
+        self.restoreFailuresAfterReset = restoreFailuresAfterReset
+    }
+
+    func restore() async throws -> RegisteredBinding? {
+        restoreCount += 1
+        if hasReset, restoreFailuresAfterReset > 0 {
+            restoreFailuresAfterReset -= 1
+            throw BindingStoreError.installMarker(operation: "exists")
+        }
+        return registeredBinding
+    }
+
+    func beginRegistration() async throws -> PendingBinding {
+        guard pending == nil, registeredBinding == nil else { throw BindingStoreError.registrationNotAllowed }
+        beginCount += 1
+        let binding = PendingBinding(bindingId: UUID(), publicCertificate: "synthetic-public-key")
+        pending = binding
+        return binding
+    }
+
+    func sign(bindingId: UUID, bytes: Data) async throws -> Data { throw BindingStoreError.registrationNotAllowed }
+
+    func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding {
+        completeCount += 1
+        await saveGate?.wait()
+        guard let pending, pending.bindingId == bindingId else { throw BindingStoreError.staleBinding }
+        let binding = RegisteredBinding(bindingId: bindingId, publicCertificate: pending.publicCertificate, carId: carId)
+        registeredBinding = binding
+        self.pending = nil
+        return binding
+    }
+
+    func reset() async throws {
+        resetCount += 1
+        if resetFailures > 0 {
+            resetFailures -= 1
+            throw BindingStoreError.keychain(operation: "delete", status: -1)
+        }
+        hasReset = true
+        pending = nil
+        registeredBinding = nil
+    }
+}
+
+@MainActor
+private final class FakeRegistrationSessionManager: SessionManaging {
+    private let bindingStore: any BindingStoring
+    var currentSession: AuthSession?
+    var hasPublishedSession = false
+    var lastError: AuthFailure?
+    var registeredBinding: RegisteredBinding?
+    var isAuthorizationInFlight = false
+    var registrationError: Error?
+    var completeBeforeRegistrationError = false
+    private(set) var registerCount = 0
+    private(set) var updateCount = 0
+    private(set) var stopCount = 0
+    private var observers: [@MainActor (SessionManagerEvent) -> Void] = []
+
+    init(bindingStore: any BindingStoring) { self.bindingStore = bindingStore }
+
+    func register(binding: PendingBinding, carToken: String) async throws -> AuthSession {
+        registerCount += 1
+        if let registrationError {
+            var completedBinding: RegisteredBinding?
+            if completeBeforeRegistrationError {
+                completedBinding = try await bindingStore.completeRegistration(bindingId: binding.bindingId, carId: "synthetic-car")
+                registeredBinding = completedBinding
+            }
+            if let failure = registrationError as? RegistrationFailure {
+                let savedBinding = completedBinding ?? failure.registeredBinding
+                registeredBinding = savedBinding
+                throw RegistrationFailure(failure: failure.failure, registeredBinding: savedBinding)
+            }
+            throw registrationError
+        }
+        registeredBinding = try await bindingStore.completeRegistration(bindingId: binding.bindingId, carId: "synthetic-car")
+        let session = AuthSession(
+            accessToken: "synthetic-fixture-session", userId: "synthetic-user", carId: "synthetic-car",
+            expiresAt: "synthetic", deadline: .seconds(3600), serverTimeMs: 0, attemptId: UUID()
+        )
+        currentSession = session
+        hasPublishedSession = true
+        return session
+    }
+
+    func updateSession(binding: RegisteredBinding?) async throws -> AuthSession {
+        updateCount += 1
+        throw BindingStoreError.registrationNotAllowed
+    }
+
+    func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle {
+        observers.append(observer)
+        return CoordinatorCancellation()
+    }
+    func emit(_ event: SessionManagerEvent) { observers.forEach { $0(event) } }
+    func webViewDidBecomeVisible() {}
+    func setActive(_ active: Bool) {}
+    func stop() {
+        stopCount += 1
+        currentSession = nil
+        hasPublishedSession = false
+        registeredBinding = nil
+        isAuthorizationInFlight = false
+    }
+}
+
+@MainActor
+private final class TestSaveGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        let waiting = waiters
+        waiters.removeAll()
+        waiting.forEach { $0.resume() }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitUntilStarted() async {
+        guard continuation == nil else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 @MainActor

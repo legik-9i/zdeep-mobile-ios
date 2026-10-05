@@ -1,5 +1,17 @@
 import AVFoundation
 
+@MainActor
+protocol CameraPermissionProviding {
+    func status() -> AVAuthorizationStatus
+    func requestAccess() async -> Bool
+}
+
+@MainActor
+struct SystemCameraPermissionProvider: CameraPermissionProviding {
+    func status() -> AVAuthorizationStatus { CameraPermission.status() }
+    func requestAccess() async -> Bool { await CameraPermission.requestAccess() }
+}
+
 enum CameraPermission {
     static func status() -> AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .video)

@@ -1,5 +1,6 @@
 #if DEBUG && targetEnvironment(simulator)
 import AVFoundation
+import Foundation
 import SwiftUI
 
 nonisolated struct EmptyUITestBindingStore: BindingStoring {
@@ -8,6 +9,140 @@ nonisolated struct EmptyUITestBindingStore: BindingStoring {
     func sign(bindingId: UUID, bytes: Data) async throws -> Data { throw BindingStoreError.registrationNotAllowed }
     func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding { throw BindingStoreError.registrationNotAllowed }
     func reset() async throws {}
+}
+
+@MainActor
+struct AuthorizationUITestHost: View {
+    enum Scenario: String { case denied, authorized, registered }
+
+    @StateObject private var coordinator: AppCoordinator
+    private let store: AuthorizationUITestBindingStore
+
+    static func scenario(arguments: [String]) -> Scenario? {
+        guard let index = arguments.firstIndex(of: "--ui-test-authorization"),
+              arguments.indices.contains(index + 1) else { return nil }
+        return Scenario(rawValue: arguments[index + 1])
+    }
+
+    init(scenario: Scenario) {
+        let store = AuthorizationUITestBindingStore(registered: scenario == .registered)
+        self.store = store
+        let manager = AuthorizationUITestSessionManager(store: store)
+        let permission = AuthorizationUITestCameraPermission(authorized: scenario == .authorized)
+        let coordinator = AppCoordinator(
+            configuration: .current,
+            bindingStore: store,
+            sessionManager: manager,
+            cameraPermission: permission
+        )
+        coordinator.syntheticAuthorizationUITestEnabled = scenario == .authorized
+        _coordinator = StateObject(wrappedValue: coordinator)
+    }
+
+    var body: some View {
+        ContentView(coordinator: coordinator)
+            .overlay(alignment: .bottom) {
+                VStack {
+                    Text("pair \(store.beginCount) · complete \(store.completeCount)")
+                        .accessibilityIdentifier("registration-count")
+                    Text("reset \(store.resetCount)")
+                        .accessibilityIdentifier("reset-count")
+                }
+                .font(.caption)
+                .padding(4)
+                .background(.regularMaterial)
+            }
+            .task { await coordinator.start() }
+    }
+}
+
+private final class AuthorizationUITestBindingStore: BindingStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var binding: RegisteredBinding?
+    private var begins = 0
+    private var completes = 0
+    private var resets = 0
+
+    init(registered: Bool) {
+        binding = registered ? RegisteredBinding(
+            bindingId: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!,
+            publicCertificate: "synthetic-certificate",
+            carId: "synthetic-car"
+        ) : nil
+    }
+
+    var beginCount: Int { lock.withLock { begins } }
+    var completeCount: Int { lock.withLock { completes } }
+    var resetCount: Int { lock.withLock { resets } }
+
+    func restore() async throws -> RegisteredBinding? { lock.withLock { binding } }
+    func beginRegistration() async throws -> PendingBinding {
+        lock.withLock { begins += 1 }
+        return PendingBinding(bindingId: UUID(), publicCertificate: "synthetic-pending")
+    }
+    func sign(bindingId: UUID, bytes: Data) async throws -> Data { Data("synthetic-signature".utf8) }
+    func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding {
+        lock.withLock {
+            completes += 1
+            let value = RegisteredBinding(bindingId: bindingId, publicCertificate: "synthetic-certificate", carId: carId)
+            binding = value
+            return value
+        }
+    }
+    func reset() async throws { lock.withLock { resets += 1; binding = nil } }
+}
+
+@MainActor
+private struct AuthorizationUITestCameraPermission: CameraPermissionProviding {
+    let authorized: Bool
+    func status() -> AVAuthorizationStatus { authorized ? .authorized : .denied }
+    func requestAccess() async -> Bool { authorized }
+}
+
+@MainActor
+private final class AuthorizationUITestSessionManager: SessionManaging {
+    private let store: AuthorizationUITestBindingStore
+    private var binding: RegisteredBinding?
+    private var observers: [UUID: @MainActor (SessionManagerEvent) -> Void] = [:]
+
+    init(store: AuthorizationUITestBindingStore) { self.store = store }
+    var currentSession: AuthSession? { nil }
+    var hasPublishedSession: Bool { false }
+    var lastError: AuthFailure? { failure }
+    var registeredBinding: RegisteredBinding? { binding }
+    var isAuthorizationInFlight: Bool { false }
+
+    func register(binding pending: PendingBinding, carToken: String) async throws -> AuthSession {
+        let registered = try await store.completeRegistration(bindingId: pending.bindingId, carId: "synthetic-car")
+        binding = registered
+        return session
+    }
+    func updateSession(binding: RegisteredBinding?) async throws -> AuthSession {
+        self.binding = binding
+        throw failure
+    }
+    func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle {
+        let id = UUID()
+        observers[id] = observer
+        return AuthorizationUITestCancellationHandle { [weak self] in self?.observers[id] = nil }
+    }
+    func webViewDidBecomeVisible() {}
+    func setActive(_ active: Bool) {}
+    func stop() { binding = nil }
+
+    private var failure: AuthFailure {
+        AuthFailure(kind: .timeout, stage: .token, attemptId: UUID(), message: "synthetic timeout", diagnosticCode: "TIMEOUT")
+    }
+    private var session: AuthSession {
+        AuthSession(accessToken: "synthetic", userId: "synthetic", carId: "synthetic-car", expiresAt: "2099-01-01T00:00:00Z", deadline: .seconds(3600), serverTimeMs: 0, attemptId: UUID())
+    }
+}
+
+@MainActor
+private final class AuthorizationUITestCancellationHandle: CancellationHandle {
+    private let onCancel: () -> Void
+    init(onCancel: @escaping () -> Void) { self.onCancel = onCancel }
+    func cancel() { onCancel() }
 }
 
 struct SessionUITestFixture: View {

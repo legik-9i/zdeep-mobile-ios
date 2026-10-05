@@ -5,6 +5,7 @@
 //  Created by Олег on 02.10.2026.
 //
 
+import AVFoundation
 import SwiftUI
 
 @MainActor
@@ -30,9 +31,26 @@ struct ContentView: View {
             case .logo:
                 StartupLogoView()
             case .welcome:
-                WelcomeView(onScan: {})
+                WelcomeView(onScan: { Task { await coordinator.beginCameraScan() } })
+            case .scanner:
+                scannerContent
+            case .cameraPermissionDenied:
+                CameraPermissionView(
+                    status: .denied,
+                    onSettings: { coordinator.openCameraSettings() },
+                    onBack: { coordinator.cancelCameraScan() }
+                )
+            case .cameraPermissionRestricted:
+                CameraPermissionView(
+                    status: .restricted,
+                    onSettings: {},
+                    onBack: { coordinator.cancelCameraScan() }
+                )
             case .loading:
-                NativeLoadingView(canCancel: false, onCancel: {})
+                NativeLoadingView(
+                    canCancel: coordinator.canCancelAuthorization,
+                    onCancel: { Task { await coordinator.cancelAuthorization() } }
+                )
             case .web:
                 EmptyView()
             case .error(let presentation):
@@ -68,6 +86,33 @@ struct ContentView: View {
             DiagnosticEventStore.shared.record(category: "webview.navigation.failed", operationID: coordinator.activeWebSession?.id.uuidString, fields: ["error": error])
         }
 #endif
+    }
+
+    @ViewBuilder
+    private var scannerContent: some View {
+#if DEBUG && targetEnvironment(simulator)
+        if coordinator.syntheticAuthorizationUITestEnabled {
+            Button("synthetic-scan-result") {
+                Task { await coordinator.scannerDidProduce("https://fixture.invalid/auth/get-otp?token=header.eyJjYXJJZCI6InN5bnRoZXRpYy1jYXIifQ.signature") }
+            }
+        } else {
+            scanner
+        }
+#else
+        scanner
+#endif
+    }
+
+    private var scanner: some View {
+        QRScannerView(
+            onResult: { result in
+                switch result {
+                case .success(let value): Task { await coordinator.scannerDidProduce(value) }
+                case .failure: coordinator.scannerDidFail()
+                }
+            },
+            onCancel: { coordinator.cancelCameraScan() }
+        )
     }
 }
 
