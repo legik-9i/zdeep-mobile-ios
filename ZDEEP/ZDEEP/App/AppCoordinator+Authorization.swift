@@ -10,6 +10,7 @@ extension AppCoordinator {
         activeScenarioID = intent
         cameraScanIntentID = intent
         didConsumeCameraResult = false
+        cameraPermissionRecheckPending = false
         didReceiveFirstFrame = false
         canCancelAuthorization = false
         closeCurrentWebSession()
@@ -27,12 +28,13 @@ extension AppCoordinator {
     }
 
     func cameraPermissionDidReturn() async {
-        guard let intent = cameraScanIntentID,
+        guard isActive, let intent = cameraScanIntentID,
               activeScenarioID == intent,
               screen == .loading || screen == .scanner || screen == .cameraPermissionDenied || screen == .cameraPermissionRestricted else { return }
         let status = cameraPermission.status()
         guard activeScenarioID == intent, cameraScanIntentID == intent else { return }
         showCameraState(for: status)
+        cameraPermissionRecheckPending = false
     }
 
     func openCameraSettings() {
@@ -45,6 +47,7 @@ extension AppCoordinator {
     func cancelCameraScan() {
         guard cameraScanIntentID != nil else { return }
         cameraScanIntentID = nil
+        cameraPermissionRecheckPending = false
         didConsumeCameraResult = false
         canCancelAuthorization = false
         activeScenarioID = UUID()
@@ -54,7 +57,7 @@ extension AppCoordinator {
     }
 
     func scannerDidProduce(_ value: String) async {
-        guard isActive, screen == .scanner, let intent = cameraScanIntentID,
+        guard isActive, !cameraPermissionRecheckPending, screen == .scanner, let intent = cameraScanIntentID,
               activeScenarioID == intent, !didConsumeCameraResult else { return }
         didConsumeCameraResult = true
         cameraScanIntentID = nil

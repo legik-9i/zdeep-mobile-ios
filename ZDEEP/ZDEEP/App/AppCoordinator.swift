@@ -50,6 +50,7 @@ final class AppCoordinator: ObservableObject {
     var restoredBinding: RegisteredBinding?
     var cameraScanIntentID: UUID?
     var didConsumeCameraResult = false
+    var cameraPermissionRecheckPending = false
     var restoreAfterCleanup: CleanupNextStep?
     var restoreAfterCleanupFailure: AuthFailure?
 #if DEBUG && targetEnvironment(simulator)
@@ -172,7 +173,10 @@ final class AppCoordinator: ObservableObject {
         if active { diagnosticMailbox?.start() } else { diagnosticMailbox?.stop() }
 #endif
         if active, didReceiveFirstFrame, webSession == nil, canPrepareWebSession { prepareWebSession() }
-        if active { Task { await cameraPermissionDidReturn() } }
+        if active {
+            if cameraScanIntentID == activeScenarioID { cameraPermissionRecheckPending = true }
+            Task { await cameraPermissionDidReturn() }
+        }
     }
 
     func retry() async {

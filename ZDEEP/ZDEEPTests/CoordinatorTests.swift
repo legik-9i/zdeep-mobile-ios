@@ -145,6 +145,38 @@ struct CoordinatorTests {
         #expect(permission.calls.count >= 4)
     }
 
+    @Test func test_scannerResultBeforeForegroundPermissionRecheckIsIgnored() async {
+        let permission = FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        let store = RegistrationCoordinatorBindingStore()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store,
+            sessionManager: manager, cameraPermission: permission
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+        #expect(coordinator.screen == .scanner)
+
+        coordinator.setActive(false)
+        permission.statusValue = .denied
+        coordinator.setActive(true)
+        await coordinator.scannerDidProduce(Self.qrURL)
+
+        #expect(store.beginCount == 0)
+        #expect(manager.registerCount == 0)
+        await Task.yield()
+        #expect(coordinator.screen == .cameraPermissionDenied)
+
+        permission.statusValue = .authorized
+        coordinator.setActive(false)
+        coordinator.setActive(true)
+        await Task.yield()
+        #expect(coordinator.screen == .scanner)
+        await coordinator.scannerDidProduce(Self.qrURL)
+        #expect(store.beginCount == 1)
+    }
+
     @Test func test_lateBeginRegistrationCannotResetNewScenarioBinding() async {
         let store = RegistrationCoordinatorBindingStore()
         let beginGate = TestSaveGate()

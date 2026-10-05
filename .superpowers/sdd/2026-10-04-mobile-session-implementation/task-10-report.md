@@ -44,3 +44,11 @@ Simulator: iPhone 18 Pro, `0DDEE416-EECF-4BF3-8F15-BA93A980033A`; во всех 
 - Первый полный unit запуск в ограниченном sandbox завершился до разрешения package graph: CoreSimulatorService и пользовательские SwiftPM/Clang cache оказались недоступны. Это не тестовый результат; повторённая команда после разрешённого доступа к Simulator/cache дала указанный PASS.
 - `git diff --check` — PASS. Python tooling не менялся, поэтому Python suite не запускался. Integration suite не затронут: remediation изменяет только coordinator, permission/reset flow и их unit/UI tests.
 - Все проверки выполнялись только на локальном Simulator и с `--environment local`; test/prod и физическое устройство не использовались.
+
+## Дополнительный remediation: QR до foreground permission recheck
+
+- Добавлен `CoordinatorTests.test_scannerResultBeforeForegroundPermissionRecheckIsIgnored()`, который детерминированно вызывает scanner callback сразу после foreground activation, до запуска запланированной проверки разрешения. RED `.artifacts/runs/20261005-092459-1791181499233146000/Tests.xcresult`: при уже отозванном разрешении callback всё ещё начинал регистрацию (`beginCount=1`, `registerCount=1`) и оставлял экран в `.loading`.
+- Coordinator теперь закрывает приём результатов камеры на время foreground recheck. После проверки callback продолжает приниматься только при текущем `.authorized`; cancel/new scan сбрасывают gate.
+- Focused GREEN: `python3 scripts/zdeep.py test --environment local --suite unit --only 'CoordinatorTests/test_scannerResultBeforeForegroundPermissionRecheckIsIgnored()' --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — 1/1, `.artifacts/runs/20261005-092720-1791181640564239000/Tests.xcresult`. Тест также подтверждает разрешённый scan после успешного `.authorized` recheck.
+- Полный unit: 172/172, `.artifacts/runs/20261005-092759-1791181679266207000/Tests.xcresult`. Полный UI: 22/22, `.artifacts/runs/20261005-092845-1791181725045721000/Tests.xcresult`.
+- Все запуски использовали local Simulator `0DDEE416-EECF-4BF3-8F15-BA93A980033A`; integration/test/prod и физическое устройство не запускались.
