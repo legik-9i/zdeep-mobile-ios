@@ -44,13 +44,14 @@ final class AppCoordinator: ObservableObject {
     let cameraPermission: any CameraPermissionProviding
     private let backgroundExecution: BackgroundExecution
     @Published var activeScenarioID: UUID?
-    private var isActive = true
+    var isActive = true
     private var didStart = false
     var didReceiveFirstFrame = false
     var restoredBinding: RegisteredBinding?
     var cameraScanIntentID: UUID?
     var didConsumeCameraResult = false
     var restoreAfterCleanup: CleanupNextStep?
+    var restoreAfterCleanupFailure: AuthFailure?
 #if DEBUG && targetEnvironment(simulator)
     var syntheticAuthorizationUITestEnabled = false
 #endif
@@ -129,9 +130,11 @@ final class AppCoordinator: ObservableObject {
         let scenario = UUID()
         activeScenarioID = scenario
         if let binding = restoredBinding {
+            canCancelAuthorization = true
             screen = .loading
             Task { @MainActor [weak self] in await self?.refresh(binding) }
         } else {
+            canCancelAuthorization = false
             screen = .welcome
         }
         await Task.yield()
@@ -179,6 +182,7 @@ final class AppCoordinator: ObservableObject {
             screen = .logo
             await startNewRestoreScenario()
         case .authorization(let binding):
+            canCancelAuthorization = true
             screen = .loading
             await refresh(binding)
         case .web(let url, _, _):
@@ -207,10 +211,12 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func refresh(_ binding: RegisteredBinding) async {
+        let scenarioID = activeScenarioID
         do {
             _ = try await sessionManager.updateSession(binding: binding)
+            guard activeScenarioID == scenarioID else { return }
         } catch {
-            guard activeScenarioID != nil else { return }
+            guard activeScenarioID == scenarioID else { return }
             let failure = sessionManager.lastError ?? Self.restoreFailure(error)
             screen = .error(.retryable(failure, context: .authorization(binding)))
         }
@@ -223,21 +229,32 @@ final class AppCoordinator: ObservableObject {
             let scenario = UUID()
             activeScenarioID = scenario
             if let binding = restoredBinding {
-                screen = .loading
-                await refresh(binding)
+                if restoreAfterCleanup != nil, let failure = restoreAfterCleanupFailure {
+                    canCancelAuthorization = false
+                    screen = .error(.retryable(failure, context: .restore))
+                } else {
+                    canCancelAuthorization = true
+                    screen = .loading
+                    await refresh(binding)
+                }
             } else {
+                canCancelAuthorization = false
                 if case .showRegistrationError(let failure) = restoreAfterCleanup {
                     restoreAfterCleanup = nil
+                    restoreAfterCleanupFailure = nil
                     screen = .error(.initialRegistrationFailure(failure))
                 } else {
                     restoreAfterCleanup = nil
+                    restoreAfterCleanupFailure = nil
                     screen = .welcome
                 }
             }
         } catch {
             activeScenarioID = UUID()
             canCancelAuthorization = false
-            screen = .error(.retryable(Self.restoreFailure(error), context: .restore))
+            let failure = Self.restoreFailure(error)
+            if restoreAfterCleanup != nil { restoreAfterCleanupFailure = failure }
+            screen = .error(.retryable(failure, context: .restore))
         }
     }
 

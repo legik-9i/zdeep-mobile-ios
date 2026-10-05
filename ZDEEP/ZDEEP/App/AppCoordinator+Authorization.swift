@@ -20,6 +20,7 @@ extension AppCoordinator {
             let granted = await cameraPermission.requestAccess()
             guard activeScenarioID == intent, cameraScanIntentID == intent else { return }
             status = granted ? .authorized : cameraPermission.status()
+            guard isActive else { return }
         }
         guard activeScenarioID == intent, cameraScanIntentID == intent else { return }
         showCameraState(for: status)
@@ -28,7 +29,7 @@ extension AppCoordinator {
     func cameraPermissionDidReturn() async {
         guard let intent = cameraScanIntentID,
               activeScenarioID == intent,
-              screen == .cameraPermissionDenied || screen == .cameraPermissionRestricted else { return }
+              screen == .loading || screen == .scanner || screen == .cameraPermissionDenied || screen == .cameraPermissionRestricted else { return }
         let status = cameraPermission.status()
         guard activeScenarioID == intent, cameraScanIntentID == intent else { return }
         showCameraState(for: status)
@@ -53,7 +54,7 @@ extension AppCoordinator {
     }
 
     func scannerDidProduce(_ value: String) async {
-        guard screen == .scanner, let intent = cameraScanIntentID,
+        guard isActive, screen == .scanner, let intent = cameraScanIntentID,
               activeScenarioID == intent, !didConsumeCameraResult else { return }
         didConsumeCameraResult = true
         cameraScanIntentID = nil
@@ -96,10 +97,7 @@ extension AppCoordinator {
         let carToken = qr.carToken
         do {
             let pending = try await bindingStore.beginRegistration()
-            guard activeScenarioID == scenarioID else {
-                try? await bindingStore.reset()
-                return
-            }
+            guard activeScenarioID == scenarioID else { return }
             _ = try await sessionManager.register(binding: pending, carToken: carToken)
             guard activeScenarioID == scenarioID else { return }
             restoredBinding = sessionManager.registeredBinding

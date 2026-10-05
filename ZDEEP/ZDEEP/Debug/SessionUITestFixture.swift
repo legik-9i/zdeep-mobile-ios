@@ -13,7 +13,7 @@ nonisolated struct EmptyUITestBindingStore: BindingStoring {
 
 @MainActor
 struct AuthorizationUITestHost: View {
-    enum Scenario: String { case denied, authorized, registered }
+    enum Scenario: String { case denied, authorized, registered, registeredLoading = "registered-loading" }
 
     @StateObject private var coordinator: AppCoordinator
     private let store: AuthorizationUITestBindingStore
@@ -25,9 +25,9 @@ struct AuthorizationUITestHost: View {
     }
 
     init(scenario: Scenario) {
-        let store = AuthorizationUITestBindingStore(registered: scenario == .registered)
+        let store = AuthorizationUITestBindingStore(registered: scenario == .registered || scenario == .registeredLoading)
         self.store = store
-        let manager = AuthorizationUITestSessionManager(store: store)
+        let manager = AuthorizationUITestSessionManager(store: store, waitsForStop: scenario == .registeredLoading)
         let permission = AuthorizationUITestCameraPermission(authorized: scenario == .authorized)
         let coordinator = AppCoordinator(
             configuration: .current,
@@ -104,8 +104,13 @@ private final class AuthorizationUITestSessionManager: SessionManaging {
     private let store: AuthorizationUITestBindingStore
     private var binding: RegisteredBinding?
     private var observers: [UUID: @MainActor (SessionManagerEvent) -> Void] = [:]
+    private let waitsForStop: Bool
+    private var updateContinuation: CheckedContinuation<Void, Never>?
 
-    init(store: AuthorizationUITestBindingStore) { self.store = store }
+    init(store: AuthorizationUITestBindingStore, waitsForStop: Bool) {
+        self.store = store
+        self.waitsForStop = waitsForStop
+    }
     var currentSession: AuthSession? { nil }
     var hasPublishedSession: Bool { false }
     var lastError: AuthFailure? { failure }
@@ -119,6 +124,9 @@ private final class AuthorizationUITestSessionManager: SessionManaging {
     }
     func updateSession(binding: RegisteredBinding?) async throws -> AuthSession {
         self.binding = binding
+        if waitsForStop {
+            await withCheckedContinuation { updateContinuation = $0 }
+        }
         throw failure
     }
     func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle {
@@ -128,7 +136,11 @@ private final class AuthorizationUITestSessionManager: SessionManaging {
     }
     func webViewDidBecomeVisible() {}
     func setActive(_ active: Bool) {}
-    func stop() { binding = nil }
+    func stop() {
+        binding = nil
+        updateContinuation?.resume()
+        updateContinuation = nil
+    }
 
     private var failure: AuthFailure {
         AuthFailure(kind: .timeout, stage: .token, attemptId: UUID(), message: "synthetic timeout", diagnosticCode: "TIMEOUT")

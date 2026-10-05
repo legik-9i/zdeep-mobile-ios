@@ -54,6 +54,18 @@ final class AuthorizationUITests: XCTestCase {
     }
 
     @MainActor
+    func test_coldRestoreLoadingCanCancelAndClearsStoredBinding() {
+        let app = launchAuthorizationFixture("registered-loading")
+        XCTAssertTrue(app.staticTexts["Загрузка"].waitForExistence(timeout: 5))
+        let cancel = app.buttons["Отмена"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
+        cancel.tap()
+
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 1")
+    }
+
+    @MainActor
     private func launchAuthorizationFixture(_ scenario: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--environment", "local", "--ui-test-authorization", scenario]

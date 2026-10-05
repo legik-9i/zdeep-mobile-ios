@@ -37,6 +37,7 @@ extension AppCoordinator {
             }
             restoredBinding = nil
             restoreAfterCleanup = nil
+            restoreAfterCleanupFailure = nil
             activeScenarioID = UUID()
             switch next {
             case .restoreThenWelcome:
@@ -46,8 +47,10 @@ extension AppCoordinator {
             }
         } catch {
             restoreAfterCleanup = next
+            let failure = Self.restoreFailure(error)
+            restoreAfterCleanupFailure = failure
             activeScenarioID = UUID()
-            screen = .error(.retryable(Self.restoreFailure(error), context: .restore))
+            screen = .error(.retryable(failure, context: .restore))
         }
     }
 
