@@ -54,3 +54,29 @@ All fixtures use synthetic identities/tokens. No real JWT, QR token, key, or aut
 Для закрытия замечания о недостающем pre-commit сценарии добавлен `test_precommit_calls_start_in_order_but_finish_independently`. Он ставит оба вызова в page-world script до `load`: `getSession` остаётся pending, `getHostState` завершает работу, авторизационные side effects отсутствуют; после публикации фиктивной сессии завершается и `getSession`. Первый запуск выявил ошибку fixture wiring: test user script добавлялся до `prepare`, а `WebSession.prepare` очищает пользовательские scripts; тест перенесён на регистрацию после `prepare` и до `load`. Это не поведенческий RED.
 
 После этого focused pre-commit test passed, а полный integration suite повторно прошёл **19/19** без failures. Result: `.artifacts/runs/20261004-194915-1791132555044294000/Tests.xcresult`. Full unit result remains **126/126**: `.artifacts/runs/20261004-194145-1791132105810577000/Tests.xcresult`.
+
+## RED probe для expired-session/in-flight fix
+
+Чтобы подтвердить поведенческий RED для Sol-only изменения `1c55b80`, создан отдельный временный worktree `/private/tmp/zdeep-ios-session-expiry-red` на базе `48c642a`; применён только diff тестового файла `WebSessionIntegrationTests+Bridge.swift` из `1c55b80`. Production-файлы не изменялись. Команда:
+
+```sh
+python3 scripts/zdeep.py test --environment local --suite integration --only 'WebSessionIntegrationTests/test_expired_published_session_rejects_while_refresh_is_in_flight()' --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A
+```
+
+Сборка прошла, local API `/health` ответил HTTP 200, документ достиг `readyState == complete`. Затем focused тест упал в `executeJavaScript` вызове `getSession()` на `timedOut(lastValue: nil)` (строка 243), потому что Promise не получил reply при истёкшей сессии и активном refresh. Это behavioral RED ожидаемого waiter hang, не fixture/build failure. Сохранённый bundle: `.artifacts/runs/20261004-200547-1791133547642971000/Tests.xcresult`.
+
+## Итоговый фикс и Sol re-review
+
+Повторное Sol review выявило, что первоначальный expiry fix ещё зависел от `isAuthorizationInFlight`: при уже истёкшей опубликованной сессии и неудачном refresh `getSession()` подписывался на события, а `authorizationActivityChanged(false)` не завершал waiter. Sol исправил это в `1c55b80`: истёкшая опубликованная сессия отклоняется независимо от refresh activity, включая post-subscription race check. Это был повтор исходного finding об истёкшем JWT; его причина и исправление зафиксированы в ledger.
+
+По повторившемуся пробелу покрытия добавлены поведенческие проверки cache при failed refresh, фактической новой recovery-попытки, невалидного `reportReady`, ошибки первичного входа до `getSession`, late commit после fail/close, старых document/container и `AbortError`. Sol не запускал проверки. Его final scoped review подтвердил, что repeated expiry finding устранён и в diff нет Critical/Important замечаний. Поздний commit тест проверяет gate `WebDocumentContext.commit`, который `WebSession.didCommit` обязан пройти до запуска очереди bridge.
+
+Luna выполнила итоговые проверки на Simulator `0DDEE416-EECF-4BF3-8F15-BA93A980033A`, `local`:
+
+- Behavioral RED для expiry во время refresh — `timedOut(lastValue: nil)` на базе `48c642a` с наложенным только regression test; сборка прошла, `/health` ответил 200, документ загрузился. Bundle: `.artifacts/runs/20261004-200547-1791133547642971000/Tests.xcresult`.
+- Focused expiry/in-flight, precommit ordering и prior-entry-failure integration проверки прошли.
+- Полный unit suite: **127/127**. Bundle: `.artifacts/runs/20261004-200107-1791133267616310000/Tests.xcresult`.
+- Полный integration suite: **25/25**, local `/health` HTTP 200. Bundle: `.artifacts/runs/20261004-200123-1791133283100859000/Tests.xcresult`.
+- `git diff --check` прошёл.
+
+Проверки использовали только искусственные данные. JWT и тела auth-запросов не выводились и не сохранялись.
