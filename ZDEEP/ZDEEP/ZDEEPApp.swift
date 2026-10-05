@@ -9,11 +9,26 @@ import SwiftUI
 
 @main
 struct ZDEEPApp: App {
-    @StateObject private var coordinator = AppCoordinator()
-
     var body: some Scene {
         WindowGroup {
-            ContentView(coordinator: coordinator)
+            #if DEBUG && targetEnvironment(simulator)
+            if let fixture = SessionUITestFixture.configuration(arguments: ProcessInfo.processInfo.arguments) {
+                SessionUITestFixture(configuration: fixture)
+            } else {
+                ProductionRootView()
+            }
+            #else
+            ProductionRootView()
+            #endif
         }
+    }
+}
+
+@MainActor
+private struct ProductionRootView: View {
+    @StateObject private var coordinator = AppCoordinator()
+
+    var body: some View {
+        ContentView(coordinator: coordinator)
     }
 }

@@ -3,6 +3,7 @@ import SwiftUI
 enum WelcomeStyle {
     static let background = Color(hex: 0xF5F5F7)
     static let text = Color(hex: 0x1D1D1F)
+    static let secondary = Color(hex: 0x5D5F5F)
     static let white = Color.white
     static let mutedText = text.opacity(0.7)
 

@@ -4,12 +4,16 @@
 <dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Камера нужна, чтобы отсканировать QR-код машины</string>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Inter-400.ttf</string>
 		<string>Inter-500.ttf</string>
 		<string>Inter-600.ttf</string>
 		<string>Inter-700.ttf</string>
+		<string>JetBrainsMono-Regular.ttf</string>
+		<string>JetBrainsMono-Medium.ttf</string>
 	</array>
 </dict>
 </plist>

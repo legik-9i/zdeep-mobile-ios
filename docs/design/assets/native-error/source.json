@@ -1,0 +1,31 @@
+{
+  "project": {
+    "id": "1417382377358815087",
+    "title": "ZDEEP2",
+    "updatedAt": "2026-10-04T07:25:34.564008Z"
+  },
+  "screen": {
+    "id": "411b28d9024448b7a36d813cbf00b56c",
+    "title": "Главная — Ошибка экрана — v4",
+    "viewport": {
+      "width": 780,
+      "height": 1768,
+      "deviceType": "MOBILE"
+    },
+    "htmlFile": "error-screen.html",
+    "sourceHtmlTitle": "Главная — Ошибка экрана — v2",
+    "htmlTitleMismatch": "Stitch screen title says v4; embedded HTML title says v2. Body source and styles were preserved unchanged."
+  },
+  "previewScreenshot": {
+    "mimeType": "image/jpeg",
+    "dimensions": "388x512",
+    "status": "The Stitch screenshot response was a blank #F5F5F7 image, so it was not retained as a design reference. Use the preserved HTML as the visual source."
+  },
+  "retrievedAt": "2026-10-04",
+  "theme": {
+    "projectBackground": "#131313",
+    "screenBackground": "#F5F5F7",
+    "screenTextPrimary": "#1D1D1F",
+    "screenFont": "Inter"
+  }
+}

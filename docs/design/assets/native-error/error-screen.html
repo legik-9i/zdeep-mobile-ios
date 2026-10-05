@@ -1,0 +1,179 @@
+<!DOCTYPE html><html lang="ru" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+<title>Главная — Ошибка экрана — v2</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-primary": "#ffffff",
+                        "secondary-fixed-dim": "#c6c6c7",
+                        "on-secondary-container": "#616363",
+                        "surface-container-high": "#ebe7e7",
+                        "primary-container": "#f7f4f7",
+                        "outline-variant": "#c5c7c9",
+                        "surface-dim": "#ddd9d9",
+                        "on-tertiary-fixed": "#1b1b1d",
+                        "secondary": "#5d5f5f",
+                        "on-tertiary-container": "#706f71",
+                        "on-tertiary-fixed-variant": "#474649",
+                        "on-primary-container": "#706f72",
+                        "surface-container-low": "#f6f3f2",
+                        "on-secondary-fixed": "#1a1c1c",
+                        "error": "#ba1a1a",
+                        "background-subtle": "#F5F5F7",
+                        "tertiary-container": "#f7f4f7",
+                        "surface-bright": "#fcf8f8",
+                        "on-primary-fixed": "#1b1b1d",
+                        "surface-white": "#FFFFFF",
+                        "surface": "#fcf8f8",
+                        "surface-variant": "#e5e2e1",
+                        "inverse-primary": "#c8c6c8",
+                        "tertiary": "#5f5e60",
+                        "primary-fixed-dim": "#c8c6c8",
+                        "tertiary-fixed": "#e4e2e4",
+                        "text-primary": "#1D1D1F",
+                        "on-error-container": "#93000a",
+                        "primary-fixed": "#e4e2e4",
+                        "tertiary-fixed-dim": "#c8c6c8",
+                        "background": "#F5F5F7",
+                        "surface-tint": "#5f5e60",
+                        "on-primary-fixed-variant": "#474649",
+                        "on-tertiary": "#ffffff",
+                        "error-container": "#ffdad6",
+                        "on-error": "#ffffff",
+                        "surface-container": "#f1edec",
+                        "secondary-fixed": "#e2e2e2",
+                        "surface-container-highest": "#e5e2e1",
+                        "on-secondary-fixed-variant": "#454747",
+                        "inverse-on-surface": "#f4f0ef",
+                        "on-background": "#1c1b1b",
+                        "on-secondary": "#ffffff",
+                        "inverse-surface": "#313030",
+                        "surface-container-lowest": "#ffffff",
+                        "outline": "#75777a",
+                        "on-surface": "#1c1b1b",
+                        "on-surface-variant": "#44474a",
+                        "secondary-container": "#dfe0e0",
+                        "primary": "#5f5e60"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "2xl": "20px",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "max-width": "1280px",
+                        "margin-x": "1.5rem",
+                        "section-gap-max": "8rem",
+                        "gutter": "1.25rem",
+                        "section-gap-min": "4rem",
+                        "lg": "80.0px",
+                        "md": "40.0px",
+                        "base": "0.5rem",
+                        "sm": "20.0px"
+                    },
+                    "fontFamily": {
+                        "headline-lg": ["Inter", "sans-serif"],
+                        "label-caps": ["Inter", "sans-serif"],
+                        "body-md": ["Inter", "sans-serif"],
+                        "headline-md": ["Inter", "sans-serif"],
+                        "hero": ["Inter", "sans-serif"],
+                        "hero-mobile": ["Inter", "sans-serif"],
+                        "label-sm": ["Inter", "sans-serif"],
+                        "code": ["JetBrains Mono", "monospace"],
+                        "h1": ["Inter", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "headline-lg": ["2.25rem", { "lineHeight": "1.2", "fontWeight": "700" }],
+                        "label-caps": ["0.75rem", { "fontWeight": "500", "letterSpacing": "0.05em" }],
+                        "body-md": ["1rem", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "headline-md": ["1.5rem", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "hero": ["4rem", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "hero-mobile": ["2.5rem", { "lineHeight": "1.2", "fontWeight": "700" }],
+                        "label-sm": ["0.875rem", { "lineHeight": "1.4", "letterSpacing": "0.01em", "fontWeight": "500" }],
+                        "code": ["0.875rem", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "h1": ["2.25rem", { "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: #F5F5F7;
+            color: #1D1D1F;
+            -webkit-tap-highlight-color: transparent;
+            min-height: max(884px, 100dvh);
+            font-family: 'Inter', sans-serif;
+        }
+        
+        /* Custom Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #e5e2e1;
+            transition: .3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: #ffffff;
+            transition: .3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        input:checked + .slider {
+            background-color: #1D1D1F;
+        }
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+        
+        /* Entrance Animations */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-up {
+            animation: fadeUp 0.4s ease-out forwards;
+            opacity: 0;
+        }
+        .delay-100 { animation-delay: 100ms; }
+        .delay-200 { animation-delay: 200ms; }
+        .delay-300 { animation-delay: 300ms; }
+    </style>
+</head>
+<body class="antialiased min-h-screen flex flex-col py-4">
+<!-- TopAppBar -->
+<!-- Main Content Canvas -->
+<main class="flex-1 px-4 flex flex-col w-full max-w-md mx-auto relative z-10"><div class="flex-1 w-full min-h-[300px]"></div><div class="w-full flex flex-col items-center text-center pb-10"><h2 class="font-headline-md text-2xl font-bold text-text-primary mb-2">Ошибка подключения</h2><p class="font-body-md text-sm text-secondary mb-5">Не удалось получить данные автомобиля</p><div class="flex items-center justify-center gap-4 text-xs font-code text-secondary mb-6"><span class="truncate">Код: SRV · HTTP 503 · D8E15186</span><span>v1.6</span></div><p class="font-medium text-sm text-text-primary mb-1">Закройте и снова откройте приложение</p><p class="text-xs text-secondary">Приложите скриншот при обращении в поддержку</p></div></main>
+<!-- BottomNavBar -->
+</body></html>
