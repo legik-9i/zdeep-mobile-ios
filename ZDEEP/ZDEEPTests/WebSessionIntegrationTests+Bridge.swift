@@ -126,6 +126,32 @@ extension WebSessionIntegrationTests {
         #expect((eventCountAfterStaleDelivery as? NSNumber)?.intValue == 1)
     }
 
+    @Test func test_public_reload_reinjects_bridge_for_a_new_document() async throws {
+        let manager = BridgeTestSessionManager()
+        manager.currentSession = BridgeTestSessionManager.fixtureSession
+        let localWebURL = AppEnvironment.local.endpoints.web
+        let session = WebSession(trustedURL: localWebURL)
+        var readyDocuments: [UUID] = []
+        let bridge = NativeBridge(session: session, manager: manager) { identity, _ in
+            readyDocuments.append(identity.documentId)
+        }
+        defer { bridge.close(); session.close() }
+        session.load(url: localWebURL)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(60))
+
+        let firstDocument = try #require(session.currentDocument?.documentId)
+        #expect(try await session.executeJavaScript("window.ZdeepNative.reportReady({screen:'content'}).then(() => true)", timeout: .seconds(10)) == .bool(true))
+        #expect(readyDocuments == [firstDocument])
+
+        session.reload()
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(60))
+        let secondDocument = try #require(session.currentDocument?.documentId)
+        #expect(secondDocument != firstDocument)
+        #expect(try await session.executeJavaScript("typeof window.ZdeepNative.reportReady", timeout: .seconds(10)) == .string("function"))
+        #expect(try await session.executeJavaScript("window.ZdeepNative.reportReady({screen:'error'}).then(() => true)", timeout: .seconds(10)) == .bool(true))
+        #expect(readyDocuments == [firstDocument, secondDocument])
+    }
+
     @Test func test_get_session_waiter_survives_activity_and_expired_session_rejects() async throws {
         let fixtureServer = try BridgeFixtureServer()
         let url = try await fixtureServer.start()

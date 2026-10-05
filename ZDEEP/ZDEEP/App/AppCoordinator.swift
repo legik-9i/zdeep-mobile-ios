@@ -9,7 +9,23 @@ protocol WebSessionHandle: AnyObject, ObservableObject where ObjectWillChangePub
     var currentURL: URL? { get }
     var isLoading: Bool { get }
     var navigationError: String? { get }
+    func prepareAndLoad(url: URL, reason: WebPreparationReason)
+    func invalidateCurrentDocument()
+    func recoverFromProcessTermination()
     func close()
+}
+
+@MainActor
+extension WebSessionHandle {
+    func prepareAndLoad(url: URL, reason: WebPreparationReason) {
+        (self as? WebSession)?.prepareAndLoad(url: url, reason: reason)
+    }
+    func invalidateCurrentDocument() {
+        (self as? WebSession)?.invalidateCurrentDocument()
+    }
+    func recoverFromProcessTermination() {
+        (self as? WebSession)?.recoverFromProcessTermination()
+    }
 }
 
 @MainActor
@@ -38,7 +54,8 @@ final class AppCoordinator: ObservableObject {
     let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
     private let clearClientState: () async -> Void
-    private let eventStore: DiagnosticEventStore
+    let eventStore: DiagnosticEventStore
+    let sessionClock: any SessionClock
     let bindingStore: any BindingStoring
     let sessionManager: any SessionManaging
     let cameraPermission: any CameraPermissionProviding
@@ -58,9 +75,17 @@ final class AppCoordinator: ObservableObject {
 #endif
     private var managerSubscription: (any CancellationHandle)?
     private var nativeBridge: NativeBridge?
-    private var acceptedReadyDocument: WebDocumentIdentity?
-    private var currentCommittedDocument: WebDocumentIdentity?
-    private var webSession: (any WebSessionHandle)?
+    var acceptedReadyDocument: WebDocumentIdentity?
+    var currentCommittedDocument: WebDocumentIdentity?
+    var readinessIdentity: WebDocumentIdentity?
+    var readinessReason: WebPreparationReason = .initial
+    var readinessTimer: (any CancellationHandle)?
+    var readinessStartedAt: Duration?
+    var readinessRemaining: Duration = .seconds(60)
+    var readinessAcceptedScreen: WebReadyScreen?
+    var didRevealWebSession = false
+    var didRecoverProcess = false
+    var webSession: (any WebSessionHandle)?
     private var webSessionChanges: AnyCancellable?
 #if DEBUG
     private var diagnosticMailbox: DiagnosticMailbox?
@@ -72,6 +97,10 @@ final class AppCoordinator: ObservableObject {
 
     var preparedWebSessionID: UUID? { webSession?.id }
 
+    func setWebViewOpen(_ open: Bool) {
+        isWebViewOpen = open
+    }
+
     var canSwitchEnvironment: Bool { false }
 
     init(
@@ -81,7 +110,8 @@ final class AppCoordinator: ObservableObject {
         sessionManager: (any SessionManaging)? = nil,
         clearClientState: (() async -> Void)? = nil,
         eventStore: DiagnosticEventStore? = nil,
-        cameraPermission: (any CameraPermissionProviding)? = nil
+        cameraPermission: (any CameraPermissionProviding)? = nil,
+        sessionClock suppliedSessionClock: (any SessionClock)? = nil
     ) {
         let configuration = configuration ?? .current
         self.configuration = configuration
@@ -91,7 +121,8 @@ final class AppCoordinator: ObservableObject {
         let store = bindingStore ?? BindingStore()
         self.bindingStore = store
         self.cameraPermission = cameraPermission ?? SystemCameraPermissionProvider()
-        let clock = ContinuousSessionClock()
+        let clock = suppliedSessionClock ?? ContinuousSessionClock()
+        self.sessionClock = clock
         let authClient = AuthClient(
             bindingStore: store, transport: URLSessionAuthHTTPTransport(), clock: clock,
             endpoints: configuration.endpoints(for: configuration.environment)
@@ -166,14 +197,16 @@ final class AppCoordinator: ObservableObject {
     func setActive(_ active: Bool) {
         guard isActive != active else { return }
         isActive = active
+        if active { resumeReadinessBudget() } else { pauseReadinessBudget() }
         sessionManager.setActive(active)
         nativeBridge?.setActive(active)
         backgroundExecution.setActive(active)
 #if DEBUG
         if active { diagnosticMailbox?.start() } else { diagnosticMailbox?.stop() }
 #endif
-        if active, didReceiveFirstFrame, webSession == nil, canPrepareWebSession { prepareWebSession() }
         if active {
+            revealAcceptedWebReadyIfPossible()
+            if didReceiveFirstFrame, webSession == nil, canPrepareWebSession { prepareWebSession() }
             if cameraScanIntentID == activeScenarioID { cameraPermissionRecheckPending = true }
             Task { await cameraPermissionDidReturn() }
         }
@@ -188,11 +221,9 @@ final class AppCoordinator: ObservableObject {
         case .authorization(let binding):
             canCancelAuthorization = true
             screen = .loading
-            await refresh(binding)
+            await retryAuthorization(binding)
         case .web(let url, _, _):
-            guard let activeWebSession else { return }
-            screen = .loading
-            activeWebSession.load(url: url)
+            await retryWebDocument(url: url)
         case .cleanup, .environment, .fullReset, .none:
             if case .cleanup(let reason, let next) = presentation.retryContext {
                 await retryBindingCleanup(reason: reason, next: next)
@@ -219,6 +250,7 @@ final class AppCoordinator: ObservableObject {
         do {
             _ = try await sessionManager.updateSession(binding: binding)
             guard activeScenarioID == scenarioID else { return }
+            readinessSessionDidChange()
         } catch {
             guard activeScenarioID == scenarioID else { return }
             let failure = sessionManager.lastError ?? Self.restoreFailure(error)
@@ -268,6 +300,12 @@ final class AppCoordinator: ObservableObject {
         let session = sessionFactory.makeSession(for: environment, endpoints: endpoints)
         webSession = session
         isWebPrepared = true
+        acceptedReadyDocument = nil
+        currentCommittedDocument = nil
+        readinessIdentity = nil
+        readinessAcceptedScreen = nil
+        didRevealWebSession = false
+        didRecoverProcess = false
         let sessionID = session.id.uuidString
         webSessionChanges = session.objectWillChange.sink { [weak self] _ in
             Task { @MainActor [weak self] in self?.sessionDidPublishState(sessionID: sessionID) }
@@ -275,13 +313,13 @@ final class AppCoordinator: ObservableObject {
         guard let activeWebSession = session as? WebSession else { return }
         self.activeWebSession = activeWebSession
         activeWebSession.onEvent = { [weak self] event in self?.webSessionDidEmit(event, scenarioID: scenario) }
-        let bridge = NativeBridge(session: activeWebSession, manager: sessionManager) { [weak self] identity, _ in
+        let bridge = NativeBridge(session: activeWebSession, manager: sessionManager) { [weak self] identity, readyScreen in
             guard let self,
                   activeWebSession.currentDocument == identity,
                   activeWebSession.isCurrentDocumentCommitted else {
                 throw AuthFailure(kind: .local, stage: .web, attemptId: UUID(), message: "Web session is not ready", diagnosticCode: "WEB_READY")
             }
-            try self.acceptWebReady(identity, scenarioID: scenario)
+            try self.acceptWebReady(identity, scenarioID: scenario, screen: readyScreen)
         }
         nativeBridge = bridge
 #if DEBUG
@@ -313,44 +351,17 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func sessionManagerDidEmit(_ event: SessionManagerEvent) {
-        if case .sessionExpired(let failure) = event, let failure, restoredBinding != nil {
+        switch event {
+        case .sessionChanged:
+            readinessSessionDidChange()
+            revealAcceptedWebReadyIfPossible()
+        case .sessionExpired(let failure):
+            guard let failure, restoredBinding != nil else { return }
             guard !isWebViewOpen else { return }
             screen = .error(.retryable(failure, context: .authorization(restoredBinding!)))
+        case .entryFailed, .authorizationActivityChanged:
+            break
         }
-    }
-
-    func webSessionDidEmit(_ event: WebSessionEvent, scenarioID: UUID) {
-        guard activeScenarioID == scenarioID else { return }
-        switch event {
-        case .documentCommitted(let identity):
-            guard identity.containerId == webSession?.id else { return }
-            currentCommittedDocument = identity
-        case .documentPreparing(let identity, _, _):
-            if currentCommittedDocument?.containerId == identity.containerId { currentCommittedDocument = nil }
-        case .documentFailed(let identity, let failure):
-            if currentCommittedDocument == identity { currentCommittedDocument = nil }
-            if let binding = restoredBinding {
-                screen = .error(.retryable(failure, context: .web(url: endpoints.web, bindingId: binding.bindingId, reason: .explicitRetry)))
-            }
-        case .processTerminated:
-            currentCommittedDocument = nil
-        }
-    }
-
-    func acceptWebReady(_ identity: WebDocumentIdentity, scenarioID: UUID) throws {
-        guard isActive, activeScenarioID == scenarioID,
-              webSession?.id == identity.containerId,
-              currentCommittedDocument == identity,
-              let binding = restoredBinding,
-              let session = sessionManager.currentSession,
-              session.carId == binding.carId else {
-            throw AuthFailure(kind: .local, stage: .web, attemptId: identity.attemptId, message: "Web session is not ready", diagnosticCode: "WEB_READY")
-        }
-        acceptedReadyDocument = identity
-        isWebViewOpen = true
-        screen = .web
-        sessionManager.webViewDidBecomeVisible()
-        eventStore.record(category: "webview.opened", operationID: identity.containerId.uuidString)
     }
 
     static func restoreFailure(_ error: Error) -> AuthFailure {
@@ -398,6 +409,11 @@ final class AppCoordinator: ObservableObject {
         currentCommittedDocument = nil
         webSession?.close()
         webSession = nil
+        cancelReadinessBudget(reset: true)
+        readinessIdentity = nil
+        readinessAcceptedScreen = nil
+        didRevealWebSession = false
+        didRecoverProcess = false
         activeWebSession = nil
         isWebViewOpen = false
         isWebPrepared = false

@@ -72,6 +72,7 @@ struct CoordinatorTests {
         await retryGate2.waitUntilStarted()
         #expect(retryCoordinator.screen == .loading)
         #expect(retryCoordinator.canCancelAuthorization)
+        #expect(retryManager.updateCount == 2)
         await retryCoordinator.cancelAuthorization()
         #expect(retryStore.resetCount == 1)
         #expect(retryManager.stopCount == 1)
@@ -663,6 +664,7 @@ struct CoordinatorTests {
             accessToken: "local-fixture-value", userId: "fixture", carId: "fixture",
             expiresAt: "fixture", deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID()
         )
+        manager.updateSucceeds = true
         let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "fixture")
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
@@ -674,6 +676,7 @@ struct CoordinatorTests {
         let prepared = try #require(factory.sessions.first)
         let originalID = prepared.id
         let identity = WebDocumentIdentity(containerId: originalID, attemptId: UUID(), documentId: UUID())
+        coordinator.webSessionDidEmit(.documentPreparing(identity, coordinator.endpoints.web, .initial), scenarioID: scenarioID)
         coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: scenarioID)
 
         try coordinator.acceptWebReady(identity, scenarioID: scenarioID)
@@ -691,6 +694,7 @@ struct CoordinatorTests {
             accessToken: "local-fixture-value", userId: "fixture", carId: "fixture",
             expiresAt: "fixture", deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID()
         )
+        manager.updateSucceeds = true
         let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "fixture")
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
@@ -701,6 +705,7 @@ struct CoordinatorTests {
         coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID)
         let prepared = try #require(factory.sessions.first)
         let identity = WebDocumentIdentity(containerId: prepared.id, attemptId: UUID(), documentId: UUID())
+        coordinator.webSessionDidEmit(.documentPreparing(identity, coordinator.endpoints.web, .initial), scenarioID: scenarioID)
         coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: scenarioID)
         try coordinator.acceptWebReady(identity, scenarioID: scenarioID)
 
@@ -722,6 +727,7 @@ struct CoordinatorTests {
             accessToken: "local-fixture-value", userId: "fixture", carId: "other-car",
             expiresAt: "fixture", deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID()
         )
+        manager.updateSucceeds = true
         let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "bound-car")
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
@@ -732,6 +738,7 @@ struct CoordinatorTests {
         coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID)
         let prepared = try #require(factory.sessions.first)
         let identity = WebDocumentIdentity(containerId: prepared.id, attemptId: UUID(), documentId: UUID())
+        coordinator.webSessionDidEmit(.documentPreparing(identity, coordinator.endpoints.web, .initial), scenarioID: scenarioID)
         coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: scenarioID)
 
         do {
@@ -921,6 +928,7 @@ struct CoordinatorTests {
             accessToken: "local-fixture-value", userId: "fixture", carId: "fixture",
             expiresAt: "fixture", deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID()
         )
+        manager.updateSucceeds = true
         let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "fixture")
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
@@ -936,6 +944,7 @@ struct CoordinatorTests {
         ) == "Подготовлен (скрыт)")
 
         let identity = WebDocumentIdentity(containerId: prepared.id, attemptId: UUID(), documentId: UUID())
+        coordinator.webSessionDidEmit(.documentPreparing(identity, coordinator.endpoints.web, .initial), scenarioID: scenarioID)
         coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: scenarioID)
         try coordinator.acceptWebReady(identity, scenarioID: scenarioID)
         #expect(DebugPanel.webViewState(
@@ -1140,12 +1149,14 @@ private final class CoordinatorSessionManager: SessionManaging {
     var lastError: AuthFailure?
     var registeredBinding: RegisteredBinding?
     var isAuthorizationInFlight = false
+    var updateSucceeds = false
     private(set) var updateCount = 0
     private var observers: [@MainActor (SessionManagerEvent) -> Void] = []
 
     func register(binding: PendingBinding, carToken: String) async throws -> AuthSession { throw BindingStoreError.registrationNotAllowed }
     func updateSession(binding: RegisteredBinding?) async throws -> AuthSession {
         updateCount += 1
+        if updateSucceeds, let currentSession { return currentSession }
         throw BindingStoreError.registrationNotAllowed
     }
     func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle {

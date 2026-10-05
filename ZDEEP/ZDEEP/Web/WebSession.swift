@@ -114,6 +114,25 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         startLoad(url: url)
     }
 
+    func prepareAndLoad(url: URL, reason: WebPreparationReason) {
+        guard !isClosed else { return }
+        prepare(url: url, reason: reason)
+        startLoad(url: url)
+    }
+
+    func invalidateCurrentDocument() {
+        guard !isClosed else { return }
+        if let currentDocument { bridge?.closeDocument(currentDocument) }
+        documentContext?.close()
+        currentDocument = nil
+        navigationCallbacks.clear()
+    }
+
+    func recoverFromProcessTermination() {
+        guard !isClosed, let url = requestedURL ?? currentURL ?? trustedURL else { return }
+        prepareAndLoad(url: url, reason: .processRecovery)
+    }
+
     func prepare(url: URL, reason: WebPreparationReason) {
         guard !isClosed else { return }
         trustedURL = trustedURL ?? url
