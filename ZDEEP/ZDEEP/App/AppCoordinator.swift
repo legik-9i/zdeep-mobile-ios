@@ -78,6 +78,7 @@ final class AppCoordinator: ObservableObject {
     var acceptedReadyDocument: WebDocumentIdentity?
     var currentCommittedDocument: WebDocumentIdentity?
     var readinessIdentity: WebDocumentIdentity?
+    var readinessURL: URL?
     var readinessReason: WebPreparationReason = .initial
     var readinessTimer: (any CancellationHandle)?
     var readinessStartedAt: Duration?
@@ -302,6 +303,7 @@ final class AppCoordinator: ObservableObject {
         isWebPrepared = true
         acceptedReadyDocument = nil
         currentCommittedDocument = nil
+        readinessURL = nil
         readinessIdentity = nil
         readinessAcceptedScreen = nil
         didRevealWebSession = false
@@ -357,6 +359,7 @@ final class AppCoordinator: ObservableObject {
             revealAcceptedWebReadyIfPossible()
         case .sessionExpired(let failure):
             guard let failure, restoredBinding != nil else { return }
+            if case .error(.retryable(_, context: .web)) = screen { return }
             guard !isWebViewOpen else { return }
             screen = .error(.retryable(failure, context: .authorization(restoredBinding!)))
         case .entryFailed, .authorizationActivityChanged:
@@ -411,6 +414,7 @@ final class AppCoordinator: ObservableObject {
         webSession = nil
         cancelReadinessBudget(reset: true)
         readinessIdentity = nil
+        readinessURL = nil
         readinessAcceptedScreen = nil
         didRevealWebSession = false
         didRecoverProcess = false

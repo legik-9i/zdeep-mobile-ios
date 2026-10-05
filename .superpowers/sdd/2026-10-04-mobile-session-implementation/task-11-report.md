@@ -28,3 +28,24 @@ Authorization Retry всегда выполняет token attempt, в том ч�
 - `git diff --check` — PASS.
 
 Unit, integration и UI запущены отдельно после последнего production изменения. Test/prod окружения и физическое устройство не использовались. Токены и тела auth-запросов не выводились.
+
+## Remediation после Sol review
+
+### RED → GREEN
+
+1. `test_readiness_budget_starts_when_jwt_is_published_before_first_frame` доказал RED: без первого кадра прошло 59 активных секунд после успешной публикации JWT; старый код стартовал полный бюджет только при `documentPreparing`, поэтому не переходил в timeout через ещё 1 секунду. RED: `.artifacts/runs/20261005-110227-1791187347933605000/Tests.xcresult`. Теперь момент публикации JWT начинает активный отсчёт; первая подготовка документа сохраняет уже израсходованную часть бюджета. GREEN: `.artifacts/runs/20261005-110829-1791187709584553000/Tests.xcresult`.
+2. `test_web_retry_preserves_failed_full_navigation_url` доказал RED двумя assertions: ошибка навигации заменяла путь на `endpoints.web`, и Retry повторно загружал корень. RED: `.artifacts/runs/20261005-110335-1791187415783875000/Tests.xcresult`. Coordinator теперь сохраняет URL последней подготовки документа в web retry context; Retry получает этот URL. GREEN: `.artifacts/runs/20261005-110848-1791187728933090000/Tests.xcresult`.
+3. `test_session_expired_preserves_visible_native_web_error_context` доказал RED: событие `.sessionExpired` заменяло видимую native web error на authorization error и теряло прежний web retry context. RED: `.artifacts/runs/20261005-110518-1791187518438559000/Tests.xcresult`. Passive expiry теперь сохраняет текущую native web error/context. GREEN: `.artifacts/runs/20261005-110907-1791187747530698000/Tests.xcresult`.
+
+Первая попытка focused RED #1 не дошла до сборки/теста: sandbox ограничил CoreSimulatorService и доступ SPM к CodeScanner, xcodebuild завершился кодом 74. По `ios-testing` ту же команду повторил с разрешённым Simulator/SPM доступом; bundle выше содержит поведенческий RED.
+
+### Свежие полные проверки после remediation
+
+Только local, Simulator `0DDEE416-EECF-4BF3-8F15-BA93A980033A`:
+
+- `python3 scripts/zdeep.py test --environment local --suite unit --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — PASS, 188 тестов / 21 suite; `.artifacts/runs/20261005-110943-1791187783204509000/Tests.xcresult`.
+- `python3 scripts/zdeep.py test --environment local --suite integration --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — PASS, 26/26; `/health` HTTP 200; `.artifacts/runs/20261005-111014-1791187814551617000/Tests.xcresult`.
+- `python3 scripts/zdeep.py test --environment local --suite ui --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` — PASS, 22/22; `.artifacts/runs/20261005-111128-1791187888020074000/Tests.xcresult`.
+- `git diff --check` — PASS.
+
+Test/prod и физическое устройство не использовались. Токены и тела auth-запросов не выводились.

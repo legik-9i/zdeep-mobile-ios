@@ -7,20 +7,26 @@ extension AppCoordinator {
         switch event {
         case .documentPreparing(let identity, let url, let reason):
             guard identity.containerId == webSession?.id else { return }
+            let continuePendingBudget = readinessIdentity == nil && readinessStartedAt != nil
             cancelReadinessBudget(reset: false)
             currentCommittedDocument = nil
             acceptedReadyDocument = nil
             readinessAcceptedScreen = nil
             readinessIdentity = identity
+            readinessURL = url
             readinessReason = reason
-            readinessRemaining = .seconds(60)
+            if !continuePendingBudget { readinessRemaining = .seconds(60) }
             setWebViewOpen(false)
             if reason == .fullNavigation || reason == .explicitRetry || reason == .processRecovery {
                 screen = .loading
                 canCancelAuthorization = true
             }
             if let binding = restoredBinding, sessionManager.currentSession?.carId == binding.carId {
-                startReadinessBudget(for: identity)
+                if readinessRemaining == .zero {
+                    readinessDidTimeout(identity, scenarioID: scenarioID)
+                } else {
+                    startReadinessBudget(for: identity)
+                }
             }
             eventStore.record(category: "webview.preparing", operationID: identity.containerId.uuidString, fields: [
                 "reason": String(describing: reason),
@@ -43,7 +49,7 @@ extension AppCoordinator {
             setWebViewOpen(false)
             canCancelAuthorization = false
             screen = .error(.retryable(failure, context: .web(
-                url: endpoints.web, bindingId: binding.bindingId, reason: readinessReason
+                url: readinessURL ?? endpoints.web, bindingId: binding.bindingId, reason: readinessReason
             )))
         case .processTerminated:
             currentCommittedDocument = nil
@@ -54,7 +60,7 @@ extension AppCoordinator {
                 readinessIdentity = nil
                 canCancelAuthorization = false
                 screen = .error(.retryable(Self.webRecoveryFailure(), context: .web(
-                    url: endpoints.web, bindingId: binding.bindingId, reason: .processRecovery
+                    url: readinessURL ?? endpoints.web, bindingId: binding.bindingId, reason: .processRecovery
                 )))
                 return
             }
@@ -129,9 +135,12 @@ extension AppCoordinator {
     }
 
     func readinessSessionDidChange() {
-        guard let identity = readinessIdentity,
-              let binding = restoredBinding,
+        guard let binding = restoredBinding,
               sessionManager.currentSession?.carId == binding.carId else { return }
+        guard let identity = readinessIdentity else {
+            if readinessStartedAt == nil, readinessRemaining > .zero { readinessStartedAt = sessionClock.now }
+            return
+        }
         if acceptedReadyDocument == identity {
             revealAcceptedWebReadyIfPossible()
         } else {
@@ -192,13 +201,14 @@ extension AppCoordinator {
         let failure = AuthFailure(kind: .timeout, stage: .web, attemptId: identity.attemptId,
             message: "Web session did not become ready", diagnosticCode: "WEB_READY_TIMEOUT")
         screen = .error(.retryable(failure, context: .web(
-            url: endpoints.web, bindingId: binding.bindingId, reason: readinessReason
+            url: readinessURL ?? endpoints.web, bindingId: binding.bindingId, reason: readinessReason
         )))
     }
 
     private func invalidateCurrentReadiness() {
         cancelReadinessBudget(reset: true)
         readinessIdentity = nil
+        readinessURL = nil
         acceptedReadyDocument = nil
         currentCommittedDocument = nil
         readinessAcceptedScreen = nil

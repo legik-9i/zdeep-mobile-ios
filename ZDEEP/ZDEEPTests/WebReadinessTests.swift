@@ -45,6 +45,38 @@ struct WebReadinessTests {
         #expect(identity.containerId == h.web.id)
     }
 
+    @Test func test_readiness_budget_starts_when_jwt_is_published_before_first_frame() async throws {
+        let clock = TestSessionClock()
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "synthetic", carId: "synthetic-car")
+        let manager = ReadinessTestSessionManager(currentSession: Self.session(carId: binding.carId))
+        let factory = ReadinessTestWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory,
+            bindingStore: ReadinessTestBindingStore(binding: binding),
+            sessionManager: manager,
+            sessionClock: clock
+        )
+        await coordinator.start()
+        let scenarioID = try #require(coordinator.activeScenarioID)
+        while manager.updateCount == 0 { await Task.yield() }
+
+        clock.advance(by: .seconds(59))
+        coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID)
+        let web = try #require(factory.sessions.first)
+        let identity = WebDocumentIdentity(containerId: web.id, attemptId: UUID(), documentId: UUID())
+        coordinator.webSessionDidEmit(.documentPreparing(identity, url, .initial), scenarioID: scenarioID)
+        coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: scenarioID)
+
+        #expect(coordinator.screen == .loading)
+        clock.advance(by: .seconds(1))
+        guard case .error(let error) = coordinator.screen else {
+            Issue.record("The 60-second budget starts when a valid JWT is published, before first frame/document preparation")
+            return
+        }
+        #expect(error.retryContext == .web(url: url, bindingId: binding.bindingId, reason: .initial))
+    }
+
     @Test func test_new_document_gets_a_fresh_readiness_budget() async throws {
         let clock = TestSessionClock()
         let h = try await makeHarness(clock: clock)
@@ -164,6 +196,25 @@ struct WebReadinessTests {
         #expect(h.web.lastLoadReason == .explicitRetry)
     }
 
+    @Test func test_web_retry_preserves_failed_full_navigation_url() async throws {
+        let h = try await makeHarness(clock: TestSessionClock())
+        let navigationURL = url.appending(path: "account/settings")
+        let identity = WebDocumentIdentity(containerId: h.web.id, attemptId: UUID(), documentId: UUID())
+        h.coordinator.webSessionDidEmit(.documentPreparing(identity, navigationURL, .fullNavigation), scenarioID: h.scenarioID)
+        h.coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: h.scenarioID)
+        h.coordinator.webSessionDidEmit(.documentFailed(identity, Self.webFailure()), scenarioID: h.scenarioID)
+
+        guard case .error(let presentation) = h.coordinator.screen else {
+            Issue.record("A failed full navigation should expose a retryable web error")
+            return
+        }
+        #expect(presentation.retryContext == .web(
+            url: navigationURL, bindingId: h.binding.bindingId, reason: .fullNavigation
+        ))
+        await h.coordinator.retry()
+        #expect(h.web.lastLoadURL == navigationURL)
+    }
+
     @Test func test_native_error_survives_passive_auth_failure_and_success() async throws {
         let clock = TestSessionClock()
         let h = try await makeHarness(clock: clock)
@@ -179,6 +230,21 @@ struct WebReadinessTests {
         #expect(h.coordinator.screen == .error(.retryable(
             failure, context: .web(url: url, bindingId: h.binding.bindingId, reason: .explicitRetry)
         )))
+    }
+
+    @Test func test_session_expired_preserves_visible_native_web_error_context() async throws {
+        let h = try await makeHarness(clock: TestSessionClock())
+        let document = h.beginDocument(reason: .fullNavigation)
+        let webFailure = Self.webFailure()
+        h.coordinator.webSessionDidEmit(.documentFailed(document, webFailure), scenarioID: h.scenarioID)
+        let nativeError = h.coordinator.screen
+        #expect(nativeError == .error(.retryable(
+            webFailure, context: .web(url: url, bindingId: h.binding.bindingId, reason: .fullNavigation)
+        )))
+
+        h.manager.currentSession = nil
+        h.manager.emit(.sessionExpired(Self.webFailure()))
+        #expect(h.coordinator.screen == nativeError)
     }
 
     @Test func test_full_navigation_preserves_working_mode_and_shows_cancel() async throws {
@@ -301,8 +367,9 @@ private final class ReadinessTestWebSession: WebSessionHandle, ObservableObject 
     @Published private(set) var navigationError: String?
     private(set) var loadCount = 0
     private(set) var lastLoadReason: WebPreparationReason?
+    private(set) var lastLoadURL: URL?
     private(set) var recoveryCount = 0
-    func prepareAndLoad(url: URL, reason: WebPreparationReason) { loadCount += 1; lastLoadReason = reason }
+    func prepareAndLoad(url: URL, reason: WebPreparationReason) { loadCount += 1; lastLoadReason = reason; lastLoadURL = url }
     func invalidateCurrentDocument() { }
     func recoverFromProcessTermination() { recoveryCount += 1 }
     func close() { }
