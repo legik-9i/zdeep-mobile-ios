@@ -98,3 +98,11 @@ Scoped review Sol отметил, что fake-session test завершался 
 | Release Simulator build | PASS, build only | `.artifacts/release-build-final-policy/Build/Products/Release-iphonesimulator/ZDEEP.app` |
 
 Release executable повторно проверен `nm -a` и `strings`: совпадений `DiagnosticExecutor`, `DebugPanel` и `DiagnosticMailbox` нет. `git diff --check` выполнен после обновления отчёта.
+
+### Stuck protocol: повторный cleanup bypass
+
+После первого Luna remediation повторилось замечание о возможности обойти незавершённую очистку. Причина: `canSwitchEnvironment` запрещал switch только при `.fullReset`; ошибка `.environment` с непустым `remaining` оставляла picker доступным. При `test → local` cleanup failure последующая попытка `prod` попадала в ту же database scope и пропускала очистку.
+
+По stuck protocol Sol добавил guard для `.environment` retry context и regression `test_failed_environment_cleanup_cannot_be_bypassed_by_same_scope_switch`: сценарий проверяет, что `test → local` с ошибкой Keychain не позволяет переключиться на same-scope `prod` до Retry; Retry очищает только остаток, и restore/auth запускается после успеха. Sol проверки не запускал. Luna подтвердила regression focused PASS, затем полную матрицу после patch: unit 203/203, integration 26/26, UI 22/22; Release Simulator build/nm не содержит debug executor markers. Итоговый код Sol patch закоммичен с тестами как `54d665a`; Luna отдельно закоммитила и проверила coordinator eligibility seam как `298e3d0`.
+
+В той же remediation серии Sol обнаружил, что старый mailbox eligibility test создавал настоящий `WebSession` и мог загрузить prod URL, несмотря на loopback trusted factory URL. Этот test source заменён на fake `WebSessionHandle` без `load` пути; координаторское eligibility свойство проверяется напрямую после fake local→prod switch. Старый focused bundle `.artifacts/runs/20261005-124031-1791193231575885000` и suites этой unsafe-fixture ревизии (`20261005-124056-1791193256095494000`, `20261005-124123-1791193283689169000`, `20261005-124227-1791193347872337000`) superseded и не используются как финальное доказательство. Безопасная fixture и актуальные полные проверки описаны выше. Sol одобрил scoped production helper/callsite; тест/prod URL новые проверки не загружают.
