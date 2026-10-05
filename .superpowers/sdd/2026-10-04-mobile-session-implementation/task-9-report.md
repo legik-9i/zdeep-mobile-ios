@@ -93,3 +93,21 @@ Focused UI подтверждение welcome + hidden prepared WebView: `ZDEEPU
 Следующие bundle использовались только для диагностического RED вывода и не засчитываются как завершённые test runs: session expiry `.artifacts/runs/20261005-071906-1791173946616475000/Tests.xcresult`, carId mismatch `.artifacts/runs/20261005-072112-1791174072260494000/Tests.xcresult`. Неудачный reset assertion `.artifacts/runs/20261005-072735-1791174455085921000/Tests.xcresult` был промежуточным run при исправлении ожидания scenario invalidation; завершённые reset GREEN bundles перечислены выше.
 
 Неудачная обычная sandbox попытка RED test build завершилась до разрешения CodeScanner и соединения с CoreSimulatorService; повтор с разрешённым Simulator доступом дал описанный compile-time RED. Токены и auth request/response bodies в код и отчёт не добавлялись.
+
+## Дополнительная remediation после повторного Sol review
+
+Исправлены три новых Important замечания. Изменения ограничены маршрутизацией начального действия, стадией reset/restore и gate подготовки WebSession.
+
+### RED → GREEN
+
+1. **Начальная регистрация — Start Over без очистки Keychain.** `test_initial_registration_start_over_does_not_reset_binding_store` добавлен до production изменений. focused запуск сначала завершился ожидаемым compile-time RED: `AppCoordinator` не имел `startOverAfterError`. После добавления отдельного маршрута action возвращает welcome без `reset()`; GREEN 1/1: `.artifacts/runs/20261005-075314-1791175994180722000/Tests.xcresult`.
+2. **Retry соответствует неудавшемуся этапу.** `test_reset_action_restore_failure_retries_restore_without_reset` проверяет context `.restore` и счётчики: reset=1, restore=2 после ошибки; после Retry reset остаётся 1, restore становится 3. GREEN 1/1: `.artifacts/runs/20261005-075417-1791176057513808000/Tests.xcresult`. Сбой `reset()` остаётся в `.cleanup`, поэтому Retry повторяет reset-транзакцию.
+3. **Cleanup error блокирует подготовку WebSession.** `test_reset_action_does_not_show_welcome_when_binding_cleanup_fails` теперь отправляет callback свежего frame после неудачного reset и подтверждает `factory.sessions.isEmpty`. GREEN 1/1: `.artifacts/runs/20261005-075434-1791176074073589000/Tests.xcresult`.
+
+Все три regression tests были написаны до production правок. Первое отсутствующее API создало compile-time RED и не позволило выполнить runtime RED оставшихся двух тестов до реализации; их GREEN результаты приведены отдельно. Токены и тела запросов не записывались.
+
+### Проверки
+
+Все проверки выполнены на iPhone 18 Pro Simulator `0DDEE416-EECF-4BF3-8F15-BA93A980033A`, только с `--environment local`. Полный свежий запуск `python3 scripts/zdeep.py test --environment local --suite all --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A` завершился успешно: `xcresulttool` показывает 196/196 passed, 0 failed, 0 skipped. Bundle: `.artifacts/runs/20261005-075522-1791176122945027000/Tests.xcresult`; preflight local API `/health` — HTTP 200. Python suite: `python3 -m unittest discover -s scripts/tests` — 34/34 passed. `git diff --check` проверяется перед фиксацией.
+
+Test/prod и физические устройства не запускались.

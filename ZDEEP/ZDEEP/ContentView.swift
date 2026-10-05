@@ -39,7 +39,7 @@ struct ContentView: View {
                 NativeErrorView(
                     presentation: presentation,
                     onRetry: { Task { await coordinator.retry() } },
-                    onStartOver: { Task { await coordinator.resetBindingAndShowWelcome() } },
+                    onStartOver: { Task { await coordinator.startOverAfterError(presentation) } },
                     onRebind: { Task { await coordinator.resetBindingAndShowWelcome() } }
                 )
             }

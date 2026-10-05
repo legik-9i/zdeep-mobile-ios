@@ -135,34 +135,40 @@ final class AppCoordinator: ObservableObject {
         screen = .welcome
     }
 
+    func startOverAfterError(_ presentation: NativeErrorPresentation) async {
+        guard case .initialRegistrationFailure = presentation else { return }
+        await startNewWelcomeScenario()
+    }
+
     func resetBindingAndShowWelcome() async {
         guard !isTransitioning else { return }
         isTransitioning = true
+        defer { isTransitioning = false }
         activeScenarioID = UUID()
         didReceiveFirstFrame = false
         closeCurrentWebSession()
         sessionManager.stop()
         screen = .loading
+
         do {
             try await bindingStore.reset()
+        } catch {
+            showBindingCleanupError()
+            return
+        }
+
+        do {
             guard try await bindingStore.restore() == nil else {
-                throw BindingStoreError.invalidRecord
+                showBindingCleanupError()
+                return
             }
             restoredBinding = nil
             activeScenarioID = UUID()
             screen = .welcome
         } catch {
-            let failure = AuthFailure(
-                kind: .local, stage: .storage, attemptId: UUID(),
-                message: "Binding cleanup failed", diagnosticCode: "KEYCHAIN"
-            )
             activeScenarioID = UUID()
-            screen = .error(.retryable(
-                failure,
-                context: .cleanup(reason: .rebind, next: .restoreThenWelcome)
-            ))
+            screen = .error(.retryable(Self.restoreFailure(error), context: .restore))
         }
-        isTransitioning = false
     }
 
     func nativeFirstFrameDidRender(scenarioID: UUID) {
@@ -282,7 +288,10 @@ final class AppCoordinator: ObservableObject {
         case .welcome, .loading, .web:
             true
         case .error(let presentation):
-            presentation.retryContext != .restore
+            switch presentation.retryContext {
+            case .restore, .cleanup: false
+            default: true
+            }
         case .logo:
             false
         }
@@ -331,6 +340,18 @@ final class AppCoordinator: ObservableObject {
 
     private static func restoreFailure(_ error: Error) -> AuthFailure {
         AuthFailure(kind: .local, stage: .storage, attemptId: UUID(), message: String(describing: error), diagnosticCode: "KEYCHAIN")
+    }
+
+    private func showBindingCleanupError() {
+        let failure = AuthFailure(
+            kind: .local, stage: .storage, attemptId: UUID(),
+            message: "Binding cleanup failed", diagnosticCode: "KEYCHAIN"
+        )
+        activeScenarioID = UUID()
+        screen = .error(.retryable(
+            failure,
+            context: .cleanup(reason: .rebind, next: .restoreThenWelcome)
+        ))
     }
 
     func switchEnvironment(to newEnvironment: AppEnvironment) async {

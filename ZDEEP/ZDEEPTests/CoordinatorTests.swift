@@ -216,9 +216,10 @@ struct CoordinatorTests {
     @Test func test_reset_action_does_not_show_welcome_when_binding_cleanup_fails() async throws {
         let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "car")
         let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: true)
+        let factory = FakeWebSessionFactory()
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            bindingStore: store, sessionManager: CoordinatorSessionManager()
+            sessionFactory: factory, bindingStore: store, sessionManager: CoordinatorSessionManager()
         )
         await coordinator.start()
         #expect(coordinator.activeScenarioID != nil)
@@ -233,6 +234,10 @@ struct CoordinatorTests {
         }
         #expect(store.resetCount == 1)
         #expect(store.restoreCount == 1)
+
+        let failedScenario = try #require(coordinator.activeScenarioID)
+        coordinator.nativeFirstFrameDidRender(scenarioID: failedScenario)
+        #expect(factory.sessions.isEmpty)
     }
 
     @Test func test_reset_action_shows_welcome_only_after_store_is_empty() async throws {
@@ -251,9 +256,9 @@ struct CoordinatorTests {
         #expect(store.restoreCount == 2)
     }
 
-    @Test func test_reset_action_does_not_show_welcome_when_post_reset_restore_fails() async {
+    @Test func test_reset_action_restore_failure_retries_restore_without_reset() async {
         let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "car")
-        let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: false, restoreFailsAfterReset: true)
+        let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: false, restoreFailuresAfterReset: 1)
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]),
             bindingStore: store, sessionManager: CoordinatorSessionManager()
@@ -263,8 +268,40 @@ struct CoordinatorTests {
         await coordinator.resetBindingAndShowWelcome()
 
         #expect(coordinator.screen != .welcome)
+        if case .error(let presentation) = coordinator.screen {
+            #expect(presentation.retryContext == .restore)
+        } else {
+            Issue.record("A post-reset restore error must preserve restore retry context")
+        }
         #expect(store.resetCount == 1)
         #expect(store.restoreCount == 2)
+
+        await coordinator.retry()
+
+        #expect(coordinator.screen == .welcome)
+        #expect(store.resetCount == 1)
+        #expect(store.restoreCount == 3)
+    }
+
+    @Test func test_initial_registration_start_over_does_not_reset_binding_store() async throws {
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "car")
+        let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: false)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: CoordinatorSessionManager()
+        )
+        await coordinator.start()
+        let failure = AuthFailure(
+            kind: .network, stage: .pair, attemptId: UUID(), message: "local fixture",
+            diagnosticCode: "NETWORK"
+        )
+
+        await coordinator.startOverAfterError(.initialRegistrationFailure(failure))
+
+        #expect(coordinator.screen == .welcome)
+        #expect(coordinator.activeScenarioID != nil)
+        #expect(store.resetCount == 0)
+        #expect(store.restoreCount == 1)
     }
 
     @Test func test_background_execution_balances_scheduled_refresh_and_bridge_recover_without_coordinator_task() {
@@ -515,20 +552,23 @@ private struct CoordinatorBindingStore: BindingStoring {
 private final class ResettableCoordinatorBindingStore: BindingStoring, @unchecked Sendable {
     private var binding: RegisteredBinding?
     private let resetFails: Bool
-    private let restoreFailsAfterReset: Bool
+    private var restoreFailuresAfterReset: Int
     private(set) var resetCount = 0
     private(set) var restoreCount = 0
     private var hasReset = false
 
-    init(binding: RegisteredBinding, resetFails: Bool, restoreFailsAfterReset: Bool = false) {
+    init(binding: RegisteredBinding, resetFails: Bool, restoreFailuresAfterReset: Int = 0) {
         self.binding = binding
         self.resetFails = resetFails
-        self.restoreFailsAfterReset = restoreFailsAfterReset
+        self.restoreFailuresAfterReset = restoreFailuresAfterReset
     }
 
     func restore() async throws -> RegisteredBinding? {
         restoreCount += 1
-        if hasReset && restoreFailsAfterReset { throw BindingStoreError.invalidRecord }
+        if hasReset && restoreFailuresAfterReset > 0 {
+            restoreFailuresAfterReset -= 1
+            throw BindingStoreError.invalidRecord
+        }
         return binding
     }
     func beginRegistration() async throws -> PendingBinding { throw BindingStoreError.registrationNotAllowed }
