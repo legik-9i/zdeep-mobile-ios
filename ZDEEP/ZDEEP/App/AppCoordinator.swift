@@ -111,6 +111,10 @@ final class AppCoordinator: ObservableObject {
         return true
     }
 
+    var isDiagnosticMailboxEligible: Bool {
+        configuration.isUSBDiagnosticsEnabled(in: environment)
+    }
+
     init(
         configuration: LaunchConfiguration? = nil,
         sessionFactory: (any WebSessionFactory)? = nil,
@@ -349,7 +353,7 @@ final class AppCoordinator: ObservableObject {
         }
         nativeBridge = bridge
 #if DEBUG
-        if configuration.isUSBDiagnosticsEnabled(in: environment) {
+        if isDiagnosticMailboxEligible {
             let mailbox = DiagnosticMailbox(session: activeWebSession, environment: environment, eventStore: eventStore)
             diagnosticMailbox = mailbox
             mailbox.start()

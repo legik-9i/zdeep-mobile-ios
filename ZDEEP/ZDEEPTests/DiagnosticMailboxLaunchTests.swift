@@ -120,6 +120,7 @@ struct DiagnosticMailboxLaunchTests {
 
         #expect(factory.environments == [.prod])
         #expect(factory.sessions.count == 1)
+        #expect(!coordinator.isDiagnosticMailboxEligible)
         #expect(!FileManager.default.fileExists(atPath: handshake.path))
     }
 

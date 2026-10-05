@@ -82,3 +82,19 @@ Fixture заменён на fake `WebSessionHandle`, у которого нет 
 Финальный UI suite собран и запущен после изменения fixture; оба `DiagnosticMailboxUITests` прошли. `git diff --check` прошёл.
 
 После Sol guard change `canSwitchEnvironment` повторно выполнен Release Simulator build (build only) по пути `.artifacts/release-build-final-review/Build/Products/Release-iphonesimulator/ZDEEP.app`; `nm -a` и binary marker scan снова не нашли `DiagnosticExecutor`, `DebugPanel` или `DiagnosticMailbox`.
+
+## Финальная проверка coordinator eligibility seam
+
+Scoped review Sol отметил, что fake-session test завершался до создания настоящей WebSession, поэтому отсутствие handshake само по себе не проверяло coordinator decision. Добавлено внутреннее `AppCoordinator.isDiagnosticMailboxEligible`; `prepareWebSession` использует его в существующем `#if DEBUG` gate, а fake local→prod тест проверяет свойство после смены environment. Fake fixture не поддерживает `load`, так что ни один prod URL не запрашивается. Sol одобрил этот scoped production diff.
+
+Повторная матрица после изменения:
+
+| Проверка | Результат | xcresult |
+|---|---:|---|
+| Coordinator eligibility focused | PASS, 1 тест | `.artifacts/runs/20261005-130906-1791194946312717000/Tests.xcresult` |
+| Полный unit suite | PASS, 203 теста, 0 failures | `.artifacts/runs/20261005-130929-1791194969491498000/Tests.xcresult` |
+| Полный WebKit integration suite | PASS, 26 тестов, 0 failures | `.artifacts/runs/20261005-130950-1791194990011962000/Tests.xcresult` |
+| Полный UI suite | PASS, 22 теста, 0 failures | `.artifacts/runs/20261005-131043-1791195043396082000/Tests.xcresult` |
+| Release Simulator build | PASS, build only | `.artifacts/release-build-final-policy/Build/Products/Release-iphonesimulator/ZDEEP.app` |
+
+Release executable повторно проверен `nm -a` и `strings`: совпадений `DiagnosticExecutor`, `DebugPanel` и `DiagnosticMailbox` нет. `git diff --check` выполнен после обновления отчёта.
