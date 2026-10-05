@@ -19,35 +19,37 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
-            if coordinator.isWebViewOpen, let session = coordinator.activeWebSession {
-                ZStack(alignment: .top) {
-                    WebViewHost(session: session)
-                    VStack(spacing: 8) {
-                        if session.isLoading {
-                            ProgressView()
-                                .padding(8)
-                        }
-                        if let url = session.currentURL {
-                            Text(url.absoluteString)
-                                .font(.caption2)
-                                .textSelection(.enabled)
-                        }
-                        if let error = session.navigationError {
-                            Text(error)
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                                .accessibilityIdentifier("webview-error")
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(8)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                WelcomeView()
+        ZStack {
+            if let session = coordinator.activeWebSession {
+                WebViewHost(session: session, isVisible: coordinator.isWebViewOpen)
+                    .opacity(coordinator.isWebViewOpen ? 1 : 0)
+                    .allowsHitTesting(coordinator.isWebViewOpen)
+                    .accessibilityHidden(!coordinator.isWebViewOpen)
+            }
+            switch coordinator.screen {
+            case .logo:
+                StartupLogoView()
+            case .welcome:
+                WelcomeView(onScan: {})
+            case .loading:
+                NativeLoadingView(canCancel: false, onCancel: {})
+            case .web:
+                EmptyView()
+            case .error(let presentation):
+                NativeErrorView(
+                    presentation: presentation,
+                    onRetry: { Task { await coordinator.retry() } },
+                    onStartOver: { Task { await coordinator.startNewWelcomeScenario() } },
+                    onRebind: { Task { await coordinator.startNewWelcomeScenario() } }
+                )
+            }
+            if coordinator.screen != .logo, let scenarioID = coordinator.activeScenarioID {
+                FirstFrameProbe(scenarioID: scenarioID) { coordinator.nativeFirstFrameDidRender(scenarioID: $0) }
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
 #if DEBUG
         .overlay(alignment: .topTrailing) {
             DebugOverlay { isShowingDebugPanel = true }

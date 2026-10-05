@@ -12,23 +12,22 @@ struct ZDEEPApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG && targetEnvironment(simulator)
-            if let fixture = SessionUITestFixture.configuration(arguments: ProcessInfo.processInfo.arguments) {
+            if ProcessInfo.processInfo.environment["ZDEEP_PASSIVE_TEST_HOST"] == "1" {
+                PassiveHostedTestRoot()
+            } else if let fixture = SessionUITestFixture.configuration(arguments: ProcessInfo.processInfo.arguments) {
                 SessionUITestFixture(configuration: fixture)
             } else {
-                ProductionRootView()
+                AppRootView()
             }
             #else
-            ProductionRootView()
+            AppRootView()
             #endif
         }
     }
 }
 
-@MainActor
-private struct ProductionRootView: View {
-    @StateObject private var coordinator = AppCoordinator()
-
-    var body: some View {
-        ContentView(coordinator: coordinator)
-    }
+#if DEBUG && targetEnvironment(simulator)
+private struct PassiveHostedTestRoot: View {
+    var body: some View { Color.clear }
 }
+#endif

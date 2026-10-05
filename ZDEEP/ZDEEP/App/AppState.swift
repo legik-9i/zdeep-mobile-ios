@@ -1,5 +1,13 @@
 import Foundation
 
+enum AppScreen: Equatable {
+    case logo
+    case welcome
+    case loading
+    case web
+    case error(NativeErrorPresentation)
+}
+
 enum NativeErrorAction: Equatable {
     case retry
     case startOver

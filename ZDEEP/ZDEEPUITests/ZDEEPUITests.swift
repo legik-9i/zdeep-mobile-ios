@@ -23,9 +23,9 @@ final class ZDEEPUITests: XCTestCase {
     }
 
     @MainActor
-    func testWelcomeScreenOpensClosesAndReopensSession() throws {
+    func testWelcomeScreenRemainsVisibleAcrossPreparedWebSessionLifecycle() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--environment", "local"]
+        app.launchArguments = ["--environment", "local", "--ui-test-empty-binding"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
@@ -34,7 +34,7 @@ final class ZDEEPUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Hello, world3!"].exists)
 
         DebugPanelTestActions.openWebView(app)
-        XCTAssertTrue(app.buttons["debug-button"].waitForExistence(timeout: 3))
+        DebugPanelTestActions.assertWebViewOpen(app)
         DebugPanelTestActions.closeWebView(app)
         XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 3))
 
@@ -43,19 +43,25 @@ final class ZDEEPUITests: XCTestCase {
     }
 
     @MainActor
-    func testLocalEnvironmentWelcomeScreenDoesNotLoadWebUntilOpened() throws {
+    func testLocalEnvironmentWelcomeRemainsVisibleWithPreparedHiddenWeb() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--environment", "local"]
+        app.launchArguments = ["--environment", "local", "--ui-test-empty-binding"]
         app.launch()
 
         let welcomeTitle = app.staticTexts["Подключите ваш Zeekr"]
         XCTAssertTrue(welcomeTitle.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["open-webview"].exists)
-        XCTAssertFalse(app.buttons["close-webview"].exists)
         app.buttons["debug-button"].tap()
         let webViewState = app.descendants(matching: .any)["webview-state"]
         XCTAssertTrue(webViewState.waitForExistence(timeout: 3))
-        XCTAssertTrue(webViewState.label.contains("Закрыт"))
+        let prepared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@ OR label CONTAINS %@", "Подготовлен", "Загрузка"),
+            object: webViewState
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [prepared], timeout: 10), .completed)
+        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].exists)
+        let hiddenWebView = app.webViews.firstMatch
+        XCTAssertTrue(hiddenWebView.exists)
+        XCTAssertFalse(hiddenWebView.isHittable)
         XCTAssertTrue(app.buttons["local"].isSelected)
         app.buttons["close-debug-panel"].tap()
     }
@@ -65,6 +71,7 @@ final class ZDEEPUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "--environment", "local",
+            "--ui-test-empty-binding",
             "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
         ]
         app.launch()

@@ -145,6 +145,61 @@ class BuildManagerTests(unittest.TestCase):
         self.assertEqual(source.read_bytes(), original_bytes)
         self.assertEqual(self.manager.build("SIM-1"), source.resolve())
 
+    def test_passive_host_flag_is_scoped_to_hosted_target(self):
+        layouts = [
+            {"TestConfigurations": [{"TestTargets": [
+                {"TestBundlePath": "__TESTROOT__/PlugIns/ZDEEPTests.xctest", "EnvironmentVariables": {"KEEP": "unit"}},
+                {"TestBundlePath": "__TESTROOT__/PlugIns/ZDEEPUITests.xctest", "EnvironmentVariables": {"KEEP": "ui"}},
+            ]}]},
+            {"__xctestrun_metadata__": {"FormatVersion": 2}, "ZDEEPTests": {
+                "TestBundlePath": "ZDEEPTests.xctest", "EnvironmentVariables": {"KEEP": "unit"}},
+                "ZDEEPUITests": {"TestBundlePath": "/tmp/ZDEEPUITests.xctest", "EnvironmentVariables": {"KEEP": "ui"}}},
+        ]
+        for index, data in enumerate(layouts):
+            with self.subTest(layout=index):
+                source = self.root / f"layout-{index}.xctestrun"
+                destination = self.root / f"configured-{index}.xctestrun"
+                source.write_bytes(plistlib.dumps(data))
+                BuildManager._configure_xctestrun(
+                    source, destination,
+                    {"ZDEEP_ENVIRONMENT": "local", "ZDEEP_PASSIVE_TEST_HOST": "1"},
+                )
+                configured = plistlib.loads(destination.read_bytes())
+                encoded = plistlib.dumps(configured)
+                self.assertIn(b"ZDEEPTests.xctest", encoded)
+                self.assertIn(b"ZDEEPUITests.xctest", encoded)
+                def targets(value):
+                    if isinstance(value, dict):
+                        if "TestBundlePath" in value:
+                            yield value
+                        for nested in value.values():
+                            yield from targets(nested)
+                    elif isinstance(value, list):
+                        for nested in value:
+                            yield from targets(nested)
+                by_bundle = {Path(item["TestBundlePath"]).name: item for item in targets(configured)}
+                self.assertEqual(by_bundle["ZDEEPTests.xctest"]["EnvironmentVariables"], {
+                    "KEEP": "unit", "ZDEEP_ENVIRONMENT": "local", "ZDEEP_PASSIVE_TEST_HOST": "1",
+                })
+                self.assertEqual(by_bundle["ZDEEPUITests.xctest"]["EnvironmentVariables"], {
+                    "KEEP": "ui", "ZDEEP_ENVIRONMENT": "local",
+                })
+
+    def test_app_entry_passive_host_skips_production_root(self):
+        source = (Path(__file__).resolve().parents[2] / "ZDEEP/ZDEEP/ZDEEPApp.swift").read_text()
+        self.assertIn("ZDEEP_PASSIVE_TEST_HOST", source)
+        self.assertIn("PassiveHostedTestRoot", source)
+        self.assertLess(source.index("PassiveHostedTestRoot"), source.index("AppRootView"))
+
+    def test_all_suite_configures_passive_unit_host(self):
+        self.manager.run("all", "local", "SIM-1")
+        command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+        configured = Path(command[command.index("-xctestrun") + 1])
+        data = plistlib.loads(configured.read_bytes())
+        targets = data["TestConfigurations"][0]["TestTargets"]
+        unit = next(target for target in targets if Path(target["TestBundlePath"]).name == "ZDEEPTests.xctest")
+        self.assertEqual(unit["EnvironmentVariables"]["ZDEEP_PASSIVE_TEST_HOST"], "1")
+
     def test_cli_formats_xcodebuild_failure_without_traceback(self):
         failure = subprocess.CalledProcessError(65, ["xcodebuild"], output="internal output")
         stderr = StringIO()

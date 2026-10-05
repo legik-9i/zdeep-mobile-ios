@@ -94,7 +94,11 @@ class BuildManager:
             if isinstance(value, dict):
                 if "TestBundlePath" in value:
                     variables = dict(value.get("EnvironmentVariables", {}))
-                    variables.update(runtime_settings)
+                    variables.update({key: setting for key, setting in runtime_settings.items()
+                                      if key != "ZDEEP_PASSIVE_TEST_HOST"})
+                    bundle_name = Path(str(value["TestBundlePath"])).name
+                    if bundle_name == "ZDEEPTests.xctest" and runtime_settings.get("ZDEEP_PASSIVE_TEST_HOST") == "1":
+                        variables["ZDEEP_PASSIVE_TEST_HOST"] = "1"
                     value["EnvironmentVariables"] = variables
                 for nested in value.values():
                     visit(nested)
@@ -189,7 +193,10 @@ class BuildManager:
         # .xctestrun file. Keep the configured copy beside the original in
         # Build/Products; only the result bundle belongs in the run directory.
         configured = artifact.with_name(f"{artifact.stem}-zdeep-run-{results.name}.xctestrun")
-        self._configure_xctestrun(artifact, configured, runtime_settings or {"ZDEEP_ENVIRONMENT": environment})
+        settings = runtime_settings or {"ZDEEP_ENVIRONMENT": environment}
+        if suite in {"unit", "integration", "all"}:
+            settings = {**settings, "ZDEEP_PASSIVE_TEST_HOST": "1"}
+        self._configure_xctestrun(artifact, configured, settings)
         command = ["xcodebuild", "test-without-building", "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={simulator}", "-resultBundlePath", str(results / "Tests.xcresult")]
         selectors = {
             "unit": ["ZDEEPTests"],

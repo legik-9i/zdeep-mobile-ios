@@ -262,8 +262,9 @@ struct WebSessionIntegrationTests {
             arguments: ["--environment", environment.rawValue],
             variables: [:]
         ))
-        coordinator.openWebView()
-        let initialSession = try #require(coordinator.activeWebSession)
+        let initialSession = WebSession(trustedURL: environment.endpoints.web)
+        defer { initialSession.close() }
+        initialSession.load(url: environment.endpoints.web)
         _ = try await initialSession.waitForJavaScript(
             "document.readyState",
             equals: .string("complete"),
@@ -279,10 +280,11 @@ struct WebSessionIntegrationTests {
         )
         #expect(seeded == .bool(true))
 
+        initialSession.close()
         await coordinator.resetClientData()
-        coordinator.openWebView()
-        let resetSession = try #require(coordinator.activeWebSession)
-        defer { coordinator.closeWebView() }
+        let resetSession = WebSession(trustedURL: environment.endpoints.web)
+        defer { resetSession.close() }
+        resetSession.load(url: environment.endpoints.web)
         _ = try await resetSession.waitForJavaScript(
             "document.readyState",
             equals: .string("complete"),

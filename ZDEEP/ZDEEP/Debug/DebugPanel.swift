@@ -37,7 +37,7 @@ struct DebugPanel: View {
                     }
                     LabeledContent("URL", value: coordinator.activeWebSession?.currentURL?.absoluteString ?? "Не открыт")
                         .textSelection(.enabled)
-                    if coordinator.isWebViewOpen {
+                    if coordinator.isWebPrepared {
                         Button("Закрыть WebView") {
                             coordinator.closeWebView()
                             dismiss()
@@ -74,7 +74,7 @@ struct DebugPanel: View {
                         .accessibilityIdentifier("js-input")
                     Button(isExecuting ? "Выполнение…" : "Выполнить") { executeJavaScript() }
                         .accessibilityIdentifier("execute-js")
-                        .disabled(isExecuting || coordinator.activeWebSession == nil)
+                        .disabled(isExecuting || coordinator.activeWebSession == nil || !coordinator.isWebViewOpen)
                     Text(javaScriptResult.isEmpty ? "Результат появится здесь" : javaScriptResult)
                         .font(.system(.footnote, design: .monospaced))
                         .textSelection(.enabled)
@@ -120,9 +120,9 @@ struct DebugPanel: View {
 
     private var webViewState: String {
         guard let session = coordinator.activeWebSession else { return "Закрыт" }
-        if session.isLoading { return "Загрузка" }
-        if session.navigationError != nil { return "Ошибка" }
-        return "Открыт"
+        if session.isLoading { return "Загрузка (скрыт)" }
+        if session.navigationError != nil { return "Ошибка (скрыт)" }
+        return "Подготовлен (скрыт)"
     }
 
     private func executeJavaScript() {

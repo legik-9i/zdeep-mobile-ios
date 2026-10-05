@@ -2,6 +2,14 @@
 import AVFoundation
 import SwiftUI
 
+nonisolated struct EmptyUITestBindingStore: BindingStoring {
+    func restore() async throws -> RegisteredBinding? { nil }
+    func beginRegistration() async throws -> PendingBinding { throw BindingStoreError.registrationNotAllowed }
+    func sign(bindingId: UUID, bytes: Data) async throws -> Data { throw BindingStoreError.registrationNotAllowed }
+    func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding { throw BindingStoreError.registrationNotAllowed }
+    func reset() async throws {}
+}
+
 struct SessionUITestFixture: View {
     enum Configuration: String {
         case initial

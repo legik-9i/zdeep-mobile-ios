@@ -5,6 +5,165 @@ import Testing
 
 @MainActor
 struct CoordinatorTests {
+    @Test func test_none_restores_to_welcome() async {
+        let bindingStore = CoordinatorBindingStore(result: .success(nil))
+        let manager = CoordinatorSessionManager()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: FakeWebSessionFactory(), bindingStore: bindingStore, sessionManager: manager
+        )
+
+        await coordinator.start()
+
+        #expect(coordinator.screen == .welcome)
+        #expect(manager.updateCount == 0)
+    }
+
+    @Test func test_registered_starts_one_token_without_welcome_flash() async throws {
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "certificate", carId: "car")
+        let manager = CoordinatorSessionManager()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: FakeWebSessionFactory(),
+            bindingStore: CoordinatorBindingStore(result: .success(binding)), sessionManager: manager
+        )
+
+        await coordinator.start()
+
+        #expect(coordinator.screen != .welcome)
+        #expect(manager.updateCount == 1)
+        #expect(coordinator.activeScenarioID != nil)
+    }
+
+    @Test func test_restore_error_starts_no_webview() async {
+        let manager = CoordinatorSessionManager()
+        let factory = FakeWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .failure(BindingStoreError.invalidRecord)), sessionManager: manager
+        )
+
+        await coordinator.start()
+        if let scenarioID = coordinator.activeScenarioID { coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID) }
+
+        #expect(coordinator.screen != .welcome)
+        #expect(manager.updateCount == 0)
+        #expect(coordinator.isWebPrepared == false)
+        #expect(factory.sessions.isEmpty)
+    }
+
+    @Test func test_web_factory_waits_for_native_frame() async throws {
+        let factory = FakeWebSessionFactory()
+        let manager = CoordinatorSessionManager()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)), sessionManager: manager
+        )
+        await coordinator.start()
+        let scenarioID = try #require(coordinator.activeScenarioID)
+
+        #expect(factory.sessions.isEmpty)
+        coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID)
+        #expect(factory.sessions.count == 1)
+    }
+
+    @Test func test_stale_frame_callback_does_not_create_container() async throws {
+        let factory = FakeWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)), sessionManager: CoordinatorSessionManager()
+        )
+        await coordinator.start()
+        let stale = try #require(coordinator.activeScenarioID)
+        await coordinator.startNewWelcomeScenario()
+
+        coordinator.nativeFirstFrameDidRender(scenarioID: stale)
+
+        #expect(factory.sessions.isEmpty)
+    }
+
+    @Test func test_background_defers_web_creation() async throws {
+        let factory = FakeWebSessionFactory()
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)), sessionManager: CoordinatorSessionManager()
+        )
+        await coordinator.start()
+        let scenarioID = try #require(coordinator.activeScenarioID)
+        coordinator.setActive(false)
+        coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID)
+
+        #expect(factory.sessions.isEmpty)
+        coordinator.setActive(true)
+        #expect(factory.sessions.count == 1)
+    }
+
+    @Test func test_web_reveal_keeps_the_prepared_session_instance() async throws {
+        let factory = FakeWebSessionFactory()
+        let manager = CoordinatorSessionManager()
+        manager.currentSession = AuthSession(
+            accessToken: "local-fixture-value", userId: "fixture", carId: "fixture",
+            expiresAt: "fixture", deadline: .seconds(600), serverTimeMs: 0, attemptId: UUID()
+        )
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "fixture")
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]), sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(binding)), sessionManager: manager
+        )
+        await coordinator.start()
+        let scenarioID = try #require(coordinator.activeScenarioID)
+        coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID)
+        let prepared = try #require(factory.sessions.first)
+        let originalID = prepared.id
+        let identity = WebDocumentIdentity(containerId: originalID, attemptId: UUID(), documentId: UUID())
+        coordinator.webSessionDidEmit(.documentCommitted(identity), scenarioID: scenarioID)
+
+        try coordinator.acceptWebReady(identity, scenarioID: scenarioID)
+
+        #expect(coordinator.isWebViewOpen)
+        #expect(coordinator.screen == .web)
+        #expect(coordinator.preparedWebSessionID == originalID)
+        #expect(factory.sessions.count == 1)
+    }
+
+    @Test func test_background_execution_balances_scheduled_refresh_and_bridge_recover_without_coordinator_task() {
+        let manager = CoordinatorSessionManager()
+        let adapter = FakeBackgroundTaskProvider()
+        let execution = BackgroundExecution(sessionManager: manager, provider: adapter)
+        execution.setActive(false)
+
+        manager.emit(.authorizationActivityChanged(true))
+        #expect(adapter.beginCount == 1)
+        manager.emit(.authorizationActivityChanged(false))
+        #expect(adapter.endCount == 1)
+
+        manager.emit(.authorizationActivityChanged(true))
+        #expect(adapter.beginCount == 2)
+        manager.emit(.authorizationActivityChanged(false))
+        #expect(adapter.endCount == 2)
+    }
+
+    @Test func test_background_execution_expiration_blocks_new_tasks_until_foreground() {
+        let manager = CoordinatorSessionManager()
+        let adapter = FakeBackgroundTaskProvider()
+        let execution = BackgroundExecution(sessionManager: manager, provider: adapter)
+        execution.setActive(false)
+        manager.emit(.authorizationActivityChanged(true))
+        adapter.expire()
+
+        #expect(adapter.beginCount == 1)
+        #expect(adapter.endCount == 1)
+        manager.emit(.authorizationActivityChanged(false))
+        manager.emit(.authorizationActivityChanged(true))
+        #expect(adapter.beginCount == 1)
+
+        execution.setActive(true)
+        execution.setActive(false)
+        #expect(adapter.beginCount == 2)
+        #expect(adapter.endCount == 1)
+    }
+
     @Test func test_select_prod_does_not_load_web() async {
         let factory = FakeWebSessionFactory()
         let coordinator = AppCoordinator(
@@ -19,13 +178,17 @@ struct CoordinatorTests {
         #expect(factory.sessions.isEmpty)
     }
 
-    @Test func test_close_then_reopen_creates_new_session() {
+    @Test func test_close_then_reopen_creates_new_session() async {
         let factory = FakeWebSessionFactory()
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            sessionFactory: factory
+            sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager()
         )
 
+        await coordinator.start()
+        if let scenarioID = coordinator.activeScenarioID { coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID) }
         coordinator.openWebView()
         let firstSession = factory.sessions[0]
         coordinator.closeWebView()
@@ -42,8 +205,6 @@ struct CoordinatorTests {
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
             clearClientState: { await state.clear() }
         )
-        coordinator.openWebView()
-
         await coordinator.switchEnvironment(to: .test)
 
         #expect(state.clearCount == 1)
@@ -66,7 +227,6 @@ struct CoordinatorTests {
         let panel = DebugPanel(coordinator: coordinator, eventStore: DiagnosticEventStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
         #expect(!panel.isEnvironmentPickerEnabled)
 
-        coordinator.openWebView()
         await coordinator.switchEnvironment(to: .prod)
         await coordinator.resetClientData()
 
@@ -108,8 +268,12 @@ struct CoordinatorTests {
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]),
             sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager(),
             eventStore: store
         )
+        await coordinator.start()
+        if let scenarioID = coordinator.activeScenarioID { coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID) }
         coordinator.openWebView()
         let session = try #require(factory.sessions.first)
         let url = URL(string: "https://example.test/path?apiKey=private-value")!
@@ -154,6 +318,61 @@ private final class FakeWebSession: WebSessionHandle, ObservableObject {
     func close() {
         closeCount += 1
     }
+}
+
+private struct CoordinatorBindingStore: BindingStoring {
+    let result: Result<RegisteredBinding?, BindingStoreError>
+
+    func restore() async throws -> RegisteredBinding? { try result.get() }
+    func beginRegistration() async throws -> PendingBinding { throw BindingStoreError.registrationNotAllowed }
+    func sign(bindingId: UUID, bytes: Data) async throws -> Data { throw BindingStoreError.registrationNotAllowed }
+    func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding { throw BindingStoreError.registrationNotAllowed }
+    func reset() async throws {}
+}
+
+@MainActor
+private final class CoordinatorSessionManager: SessionManaging {
+    var currentSession: AuthSession?
+    var hasPublishedSession = false
+    var lastError: AuthFailure?
+    var registeredBinding: RegisteredBinding?
+    var isAuthorizationInFlight = false
+    private(set) var updateCount = 0
+    private var observers: [@MainActor (SessionManagerEvent) -> Void] = []
+
+    func register(binding: PendingBinding, carToken: String) async throws -> AuthSession { throw BindingStoreError.registrationNotAllowed }
+    func updateSession(binding: RegisteredBinding?) async throws -> AuthSession {
+        updateCount += 1
+        throw BindingStoreError.registrationNotAllowed
+    }
+    func subscribe(_ observer: @escaping @MainActor (SessionManagerEvent) -> Void) -> any CancellationHandle {
+        observers.append(observer)
+        return CoordinatorCancellation()
+    }
+    func emit(_ event: SessionManagerEvent) { observers.forEach { $0(event) } }
+    func webViewDidBecomeVisible() {}
+    func setActive(_ active: Bool) {}
+    func stop() {}
+}
+
+@MainActor
+private final class FakeBackgroundTaskProvider: BackgroundTaskProviding {
+    private(set) var beginCount = 0
+    private(set) var endCount = 0
+    private var expiration: (() -> Void)?
+
+    func begin(expiration: @escaping () -> Void) -> UUID? {
+        beginCount += 1
+        self.expiration = expiration
+        return UUID()
+    }
+    func end(_ identifier: UUID) { endCount += 1 }
+    func expire() { expiration?() }
+}
+
+@MainActor
+private final class CoordinatorCancellation: CancellationHandle {
+    func cancel() {}
 }
 
 @MainActor
