@@ -20,9 +20,9 @@
 python3 scripts/zdeep.py test --environment local --suite all --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A
 ```
 
-Завершённый результат: `.artifacts/runs/20261005-133409-1791196449887683000/Tests.xcresult`.
+Завершённый результат на финальном исходнике: `.artifacts/runs/20261005-175918-1791212358542160000/Tests.xcresult`.
 
-`xcresulttool get test-results summary` подтвердил `Passed`, 254 теста, 0 failures, 0 skipped. По тестовым bundle: unit — 203, integration — 29, UI — 22. Это полный запуск перед добавлением одного дополнительного offline assertion в существующий loopback HTTP test; сам финальный test прошёл focused повторно, описанный ниже. Другие исходники прошли полный suite без изменений.
+`xcresulttool get test-results summary` подтвердил `Passed`, 254 теста, 0 failures, 0 skipped. Состав: unit — 203, integration — 29, UI — 22. Прогон завершился успешно примерно за 290 секунд. В нём присутствует финальная offline-проверка loopback HTTP test.
 
 ## Добавленные и переиспользованные сценарии
 
@@ -43,7 +43,7 @@ Focused результаты:
 | Тот же HTTP test с offline assertion | 1/1 PASS | `.artifacts/runs/20261005-172447-1791210287926317000/Tests.xcresult` |
 | Authorization UI и error screenshot | 1/1 PASS | `.artifacts/runs/20261005-133337-1791196417340963000/Tests.xcresult` |
 
-Отдельный повтор `--suite all` после временного добавления Welcome screenshot attachment вызвал аномалию XCTest: UI `waitForExistence` шаги показывали около 900 секунд каждый. До остановки assertion failures не было. Повтор остановлен; дополнительный screenshot вызов удалён из тестового исходника. Используется предыдущий завершённый all bundle и focused UI bundle с обоими снимками.
+Более ранний повтор `--suite all` после временного добавления Welcome screenshot attachment вызвал аномалию XCTest: UI `waitForExistence` шаги показывали около 900 секунд каждый. Дополнительный screenshot вызов был удалён из тестового исходника. Повторный полный suite на финальном исходнике завершился штатно и подтвердил все 254 теста.
 
 ## Скриншоты
 
