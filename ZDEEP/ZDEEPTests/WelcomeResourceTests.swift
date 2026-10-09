@@ -1,8 +1,37 @@
 import CryptoKit
 import Testing
 import UIKit
+import WebKit
+@testable import ZDEEP
 
 struct WelcomeResourceTests {
+    @Test @MainActor
+    func nativeBackgroundUsesExactSrgbColor() throws {
+        let color = try #require(UIColor(named: "NativeBackground"))
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        #expect(color.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+        #expect(abs(red - 245.0 / 255) < 0.00001)
+        #expect(abs(green - 245.0 / 255) < 0.00001)
+        #expect(abs(blue - 247.0 / 255) < 0.00001)
+        #expect(abs(alpha - 1) < 0.00001)
+    }
+
+    @Test @MainActor
+    func webViewHostAppliesNativeBackgroundToWebAndScrollViews() throws {
+        let session = WebSession()
+        defer { session.close() }
+        let webView = session.webView
+        WebViewHost.configureBackground(for: webView)
+        let expected = try #require(UIColor(named: "NativeBackground"))
+
+        #expect(webView.backgroundColor?.isEqual(expected) == true)
+        #expect(webView.scrollView.backgroundColor?.isEqual(expected) == true)
+        #expect(webView.underPageBackgroundColor?.isEqual(expected) == true)
+    }
+
     @Test @MainActor
     func welcomeArtworkAndInterLicenseArePackaged() throws {
         for asset in ["WelcomeHero", "WelcomeBolt", "WelcomeScan", "WelcomeHelp"] {

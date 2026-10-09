@@ -11,7 +11,7 @@
                 <viewController id="launch-vc" sceneMemberID="viewController">
                     <view key="view" contentMode="scaleToFill" id="launch-view">
                         <rect key="frame" x="0.0" y="0.0" width="393" height="852"/>
-                        <color key="backgroundColor" red="0.961" green="0.961" blue="0.969" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
+                        <color key="backgroundColor" red="0.960784314" green="0.960784314" blue="0.968627451" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                         <subviews>
                             <imageView clipsSubviews="YES" userInteractionEnabled="NO" contentMode="scaleAspectFit" image="StartupLogo" translatesAutoresizingMaskIntoConstraints="NO" id="startup-logo"/>
                         </subviews>

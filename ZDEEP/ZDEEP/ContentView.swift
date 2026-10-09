@@ -23,6 +23,7 @@ struct ContentView: View {
         ZStack {
             if let session = coordinator.activeWebSession {
                 WebViewHost(session: session, isVisible: coordinator.isWebViewOpen)
+                    .ignoresSafeArea(.container, edges: .bottom)
                     .opacity(coordinator.isWebViewOpen ? 1 : 0)
                     .allowsHitTesting(coordinator.isWebViewOpen)
                     .accessibilityHidden(!coordinator.isWebViewOpen)
@@ -68,6 +69,7 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WelcomeStyle.background.ignoresSafeArea())
 #if DEBUG
         .overlay(alignment: .topTrailing) {
             DebugOverlay { isShowingDebugPanel = true }
