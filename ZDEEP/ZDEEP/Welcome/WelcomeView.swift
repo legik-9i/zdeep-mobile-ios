@@ -26,6 +26,7 @@ struct WelcomeView: View {
                 .padding(.bottom, WelcomeStyle.pageBottomInset)
             }
             .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
             .background(WelcomeStyle.background)
         }
         .background(WelcomeStyle.background.ignoresSafeArea())
