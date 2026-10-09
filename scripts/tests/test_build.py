@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zdeep_tools.build import BuildManager, BuildError
+from zdeep_tools.preflight import PreflightError
 from zdeep import main
 
 
@@ -218,6 +219,18 @@ class BuildManagerTests(unittest.TestCase):
             ])
         self.assertEqual(result, 0)
         preflight.assert_not_called()
+
+    def test_cli_network_preflight_failure_does_not_run_build_manager(self):
+        with patch("zdeep.preflight", side_effect=PreflightError("blocked")), patch("zdeep.BuildManager") as manager, redirect_stderr(StringIO()):
+            result = main(["test", "--environment", "local", "--suite", "integration", "--simulator", "SIM-1"])
+        self.assertEqual(result, 1)
+        manager.return_value.run.assert_not_called()
+
+    def test_cli_network_preflight_receives_configured_local_web_url(self):
+        with patch("zdeep.preflight", return_value="ready") as preflight, patch("zdeep.BuildManager") as manager, redirect_stdout(StringIO()):
+            manager.return_value.run.return_value = self.root / "results"
+            self.assertEqual(main(["test", "--environment", "local", "--suite", "integration", "--simulator", "SIM-1"]), 0)
+        preflight.assert_called_once_with("local", "integration", "http://localhost:4002", web_url="http://localhost:4005")
 
     def test_only_filter_uses_xcresult_swift_testing_node_identifier(self):
         self.manager.run("unit", "local", "SIM-1", only="ZDEEPTests/example()")

@@ -90,7 +90,7 @@ def main(argv=None):
             if args.suite == "unit":
                 print("Для unit-набора проверка доступности API не требуется")
             else:
-                print(preflight(args.environment, args.suite, config["api"][args.environment]))
+                print(preflight(args.environment, args.suite, config["api"][args.environment], web_url=config["web"][args.environment]))
         elif args.command == "test":
             simulator = args.simulator or config.get("simulator")
             if not simulator:
@@ -98,7 +98,7 @@ def main(argv=None):
             if args.suite == "unit":
                 print("Для unit-набора проверка доступности API не требуется")
             else:
-                print(preflight(args.environment, args.suite, config["api"][args.environment]))
+                print(preflight(args.environment, args.suite, config["api"][args.environment], web_url=config["web"][args.environment]))
             runtime_settings = {
                 "ZDEEP_ENVIRONMENT": args.environment,
                 "ZDEEP_WEB_URL": config["web"][args.environment],
@@ -121,7 +121,7 @@ def main(argv=None):
             if not simulator:
                 raise DiagnosticError("Укажите --simulator или simulator в .local/development.json")
             if args.environment == "local":
-                print(preflight("local", "integration", config["api"]["local"]))
+                print(preflight("local", "integration", config["api"]["local"], web_url=config["web"]["local"]))
             DiagnosticManager(ROOT).simulator_launch(
                 simulator, args.environment,
                 config["web"][args.environment], config["api"][args.environment]
@@ -139,7 +139,7 @@ def main(argv=None):
             if args.target == "device" and args.environment != "test":
                 raise DiagnosticError("Диагностика физического устройства разрешена только в test")
             if args.target == "simulator" and args.environment == "local":
-                print(preflight("local", "integration", config["api"]["local"]))
+                print(preflight("local", "integration", config["api"]["local"], web_url=config["web"]["local"]))
             response = DiagnosticManager(ROOT).diagnose(
                 args.target, target_id, javascript, args.timeout,
                 environment=args.environment,

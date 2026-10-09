@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -8,10 +9,22 @@ class PreflightError(RuntimeError):
     pass
 
 
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parsed = urllib.parse.urlsplit(url)
+    if not parsed.scheme or not parsed.hostname:
+        raise PreflightError(f"Некорректный адрес сервиса: {url}")
+    try:
+        return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port
+    except ValueError as exc:
+        raise PreflightError(f"Некорректный адрес сервиса: {url}") from exc
+
+
 def _http_status(url: str, timeout: int = 5) -> int:
     request = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
+            if _origin(response.geturl()) != _origin(url):
+                raise PreflightError(f"Редирект сервиса покинул локальный контур: {response.geturl()}")
             return response.status
     except urllib.error.HTTPError as exc:
         return exc.code
@@ -30,24 +43,30 @@ def check_local_health(api_base: str, request=_http_status) -> int:
     return status
 
 
-def preflight(environment: str, suite: str = "integration", api_base: str | None = None, request=_http_status) -> str:
-    if environment not in {"local", "test"}:
-        raise PreflightError("Сетевой preflight разрешён только для local или test")
+def preflight(
+    environment: str,
+    suite: str = "integration",
+    api_base: str | None = None,
+    request=_http_status,
+    *,
+    web_url: str | None = None,
+) -> str:
+    if environment != "local":
+        raise PreflightError("Сетевой preflight разрешён только для local")
     if suite not in {"unit", "integration", "ui", "all"}:
         raise PreflightError(f"Неизвестный набор тестов: {suite}")
     if suite == "unit":
         return "unit: сетевые проверки не требуются"
     if not api_base:
         raise PreflightError("Не задан базовый адрес API")
-    if environment == "local":
-        check_local_health(api_base, request=request)
-        return "local API /health: HTTP 200"
-    if not api_base.startswith("https://"):
-        raise PreflightError("Для test разрешён только HTTPS API")
+    if not web_url:
+        raise PreflightError("Не задан адрес local Web")
+
+    check_local_health(api_base, request=request)
     try:
-        status = request(api_base, timeout=10)
+        status = request(web_url, timeout=5)
     except Exception as exc:
-        raise PreflightError(f"Тестовый API недоступен: {exc}") from exc
-    if status >= 500:
-        raise PreflightError(f"Тестовый API вернул HTTP {status}")
-    return f"test API ответил HTTP {status}; бизнесовая готовность не проверяется"
+        raise PreflightError(f"Локальный Web недоступен: {exc}") from exc
+    if status != 200:
+        raise PreflightError(f"Локальный Web вернул HTTP {status}, ожидался 200")
+    return "local API /health and Web: HTTP 200"
