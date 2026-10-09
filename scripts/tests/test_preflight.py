@@ -4,6 +4,8 @@ import sys
 from unittest.mock import Mock
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -83,21 +85,56 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("unit", preflight("local", "unit", request=request))
         request.assert_not_called()
 
-    def test_redirect_cannot_leave_local_origin(self):
-        from zdeep_tools import preflight as module
-        response = Mock(status=200, geturl=lambda: "https://api.zdeep.ru/health")
-        with patch.object(module.urllib.request, "urlopen") as urlopen:
-            urlopen.return_value.__enter__.return_value = response
+    def test_redirect_is_checked_before_requesting_destination(self):
+        from zdeep_tools.preflight import _http_status
+        external_hits = []
+
+        class ExternalHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                external_hits.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        external = ThreadingHTTPServer(("127.0.0.1", 0), ExternalHandler)
+        external_url = f"http://127.0.0.1:{external.server_port}/target"
+
+        class LocalHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/redirect-out":
+                    self.send_response(302)
+                    self.send_header("Location", external_url)
+                    self.end_headers()
+                elif self.path == "/redirect-local":
+                    self.send_response(302)
+                    self.send_header("Location", "/health")
+                    self.end_headers()
+                else:
+                    self.send_response(200)
+                    self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        local = ThreadingHTTPServer(("127.0.0.1", 0), LocalHandler)
+        servers = (external, local)
+        threads = [Thread(target=server.serve_forever, daemon=True) for server in servers]
+        for thread in threads:
+            thread.start()
+        try:
+            local_url = f"http://127.0.0.1:{local.server_port}"
+            self.assertEqual(_http_status(local_url + "/redirect-local"), 200)
             with self.assertRaises(PreflightError):
-                module._http_status("http://localhost:4002/health")
-
-    def test_redirect_within_origin_returns_final_status(self):
-        from zdeep_tools import preflight as module
-        response = Mock(status=200, geturl=lambda: "http://localhost:4002/health/ready")
-        with patch.object(module.urllib.request, "urlopen") as urlopen:
-            urlopen.return_value.__enter__.return_value = response
-            self.assertEqual(module._http_status("http://localhost:4002/health"), 200)
-
+                _http_status(local_url + "/redirect-out")
+            self.assertEqual(external_hits, [])
+        finally:
+            for server in servers:
+                server.shutdown()
+                server.server_close()
+            for thread in threads:
+                thread.join()
 
     def test_local_diagnostic_callers_pass_configured_web_url(self):
         with patch("zdeep.preflight", return_value="ready") as preflight, patch("zdeep.DiagnosticManager") as manager, redirect_stdout(StringIO()):

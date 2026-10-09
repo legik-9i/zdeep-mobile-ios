@@ -23,3 +23,10 @@
 ## Ограничения и риски
 
 Xcode, iOS suites и полный local `all` не запускались по заданному ограничению этой задачи. Проверка redirect policy фиксирует допустимый redirect на том же origin; локальный live preflight завершился напрямую успешным HTTP 200.
+
+## Fix round 1 — redirect до проверки origin
+
+- Причина замечания подтверждена: RED `python3 -m unittest scripts.tests.test_preflight.PreflightTests.test_redirect_is_checked_before_requesting_destination` упал с `external_hits == ['/target']`; `urlopen()` успел отправить запрос за редиректом.
+- Исправление: `_LocalRedirectHandler.redirect_request()` сверяет origin назначения с исходным до того, как urllib создаёт следующий запрос. Редирект в пределах origin проходит и возвращает финальный статус.
+- GREEN: `python3 -m unittest scripts.tests.test_preflight scripts.tests.test_build` — 40 тестов, OK. Регрессия использует два loopback HTTP-сервера; внешний сервер не получает запрос, same-origin редирект завершён HTTP 200.
+- `git diff --check` — без замечаний.

@@ -19,12 +19,22 @@ def _origin(url: str) -> tuple[str, str, int | None]:
         raise PreflightError(f"Некорректный адрес сервиса: {url}") from exc
 
 
+class _LocalRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def __init__(self, url: str):
+        super().__init__()
+        self.origin = _origin(url)
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        destination = urllib.parse.urljoin(req.full_url, newurl)
+        if _origin(destination) != self.origin:
+            raise PreflightError(f"Редирект сервиса покинул локальный контур: {destination}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def _http_status(url: str, timeout: int = 5) -> int:
     request = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            if _origin(response.geturl()) != _origin(url):
-                raise PreflightError(f"Редирект сервиса покинул локальный контур: {response.geturl()}")
+        with urllib.request.build_opener(_LocalRedirectHandler(url)).open(request, timeout=timeout) as response:
             return response.status
     except urllib.error.HTTPError as exc:
         return exc.code
