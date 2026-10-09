@@ -260,7 +260,21 @@ class BuildManagerTests(unittest.TestCase):
                     self.manager.validate_test_report(report)
 
     def test_malformed_test_reports_are_rejected(self):
-        for report in ({}, {"testNodes": "invalid"}, None):
+        reports = (
+            {},
+            {"testNodes": "invalid"},
+            None,
+            {"testNodes": [
+                {"nodeType": "Test Case", "result": "Passed"},
+                {"nodeType": "Test Case"},
+            ]},
+            {"testNodes": [
+                {"nodeType": "Test Case", "result": "Passed"},
+                {"nodeType": "Test Case", "result": "Unexpected"},
+            ]},
+            {"testNodes": [{"nodeType": "Test Case", "result": []}]},
+        )
+        for report in reports:
             with self.subTest(report=report):
                 with self.assertRaises(BuildError):
                     self.manager.validate_test_report(report)

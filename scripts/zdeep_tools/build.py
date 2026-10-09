@@ -136,6 +136,11 @@ class BuildManager:
             visit(node)
 
         test_cases = [node for node in nodes if node.get("nodeType") == "Test Case"]
+        valid_results = {"Passed", "Failed", "Expected Failure", "Skipped"}
+        for node in test_cases:
+            result = node.get("result")
+            if not isinstance(result, str) or result not in valid_results:
+                raise BuildError("xcresult содержит некорректный результат теста")
         failed = [node for node in test_cases if node.get("result") == "Failed"]
         if failed:
             raise BuildError(f"xcresult содержит Failed: {failed[0].get('nodeIdentifier', '<unknown>')}")
