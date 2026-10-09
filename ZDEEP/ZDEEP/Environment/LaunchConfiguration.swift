@@ -1,6 +1,12 @@
 import Foundation
 
 struct LaunchConfiguration {
+#if targetEnvironment(simulator)
+    private static let isSimulatorTarget = true
+#else
+    private static let isSimulatorTarget = false
+#endif
+
     let environment: AppEnvironment
     let usbDiagnosticsEnabled: Bool
     let usbDiagnosticsOpenWebViewEnabled: Bool
@@ -9,7 +15,7 @@ struct LaunchConfiguration {
 
     init(arguments: [String], variables: [String: String]) {
         let selected = Self.value(for: "--environment", in: arguments) ?? variables["ZDEEP_ENVIRONMENT"]
-        environment = selected.flatMap(AppEnvironment.init(rawValue:)) ?? .local
+        environment = selected.flatMap(AppEnvironment.init(rawValue:)) ?? Self.defaultEnvironment(isSimulator: Self.isSimulatorTarget)
 #if DEBUG
         let requested = arguments.contains("--usb-diagnostics") || variables["ZDEEP_USB_DIAGNOSTICS"] == "1"
 #if targetEnvironment(simulator)
@@ -29,6 +35,10 @@ struct LaunchConfiguration {
         localBackendOverride = Self.validURL(
             Self.value(for: "--api-url", in: arguments) ?? variables["ZDEEP_API_URL"]
         )
+    }
+
+    static func defaultEnvironment(isSimulator: Bool) -> AppEnvironment {
+        isSimulator ? .local : .test
     }
 
     static var current: LaunchConfiguration {
