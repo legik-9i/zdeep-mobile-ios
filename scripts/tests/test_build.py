@@ -64,49 +64,48 @@ class BuildManagerTests(unittest.TestCase):
         self.assertEqual(len(build_calls), 1)
         self.assertEqual(len(test_calls), 1)
 
-    def test_ad_hoc_signing_is_limited_to_local_unit_simulator_builds(self):
-        self.manager.run("unit", "local", "SIM-1")
-        local_unit = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=YES", local_unit)
-        self.assertIn("CODE_SIGN_IDENTITY=-", local_unit)
-
-        self.runner.reset_mock()
-        self.manager.run("unit", "test", "SIM-1")
-        test_unit = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", test_unit)
-        self.assertNotIn("CODE_SIGN_IDENTITY=-", test_unit)
-
-        self.runner.reset_mock()
-        self.manager.run("integration", "local", "SIM-1")
-        local_integration = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=YES", local_integration)
-        self.assertIn("CODE_SIGN_IDENTITY=-", local_integration)
-        integration_run = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
-        self.assertIn("-only-testing:ZDEEPTests/WebSessionIntegrationTests", integration_run)
-
-        self.runner.reset_mock()
-        self.manager.run("integration", "test", "SIM-1")
-        test_integration = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", test_integration)
-        self.assertNotIn("CODE_SIGN_IDENTITY=-", test_integration)
-
-        self.runner.reset_mock()
-        self.manager.run("all", "local", "SIM-1")
-        local_all = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=YES", local_all)
-        self.assertIn("CODE_SIGN_IDENTITY=-", local_all)
-
-        self.runner.reset_mock()
-        self.manager.run("all", "test", "SIM-1")
-        test_all = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", test_all)
-        self.assertNotIn("CODE_SIGN_IDENTITY=-", test_all)
-
+    def test_all_test_suites_use_ad_hoc_signed_build(self):
+        for suite in ("unit", "integration", "ui", "all"):
+            with self.subTest(suite=suite):
+                self.runner.reset_mock()
+                self.manager.run(suite, "local", "SIM-1")
+                build = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+                self.assertIn("CODE_SIGNING_ALLOWED=YES", build)
+                self.assertIn("CODE_SIGN_IDENTITY=-", build)
         self.runner.reset_mock()
         self.manager.build("SIM-1")
-        direct_build = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
-        self.assertIn("CODE_SIGNING_ALLOWED=NO", direct_build)
-        self.assertNotIn("CODE_SIGN_IDENTITY=-", direct_build)
+        build = next(call.args[0] for call in self.runner.call_args_list if "build-for-testing" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=YES", build)
+        self.assertIn("CODE_SIGN_IDENTITY=-", build)
+
+    def test_build_tests_is_reusable_by_every_suite(self):
+        self.manager.build("SIM-1")
+        self.runner.reset_mock()
+        for suite in ("unit", "integration", "ui", "all"):
+            self.manager.run(suite, "local", "SIM-1", skip_build=True)
+        commands = [call.args[0] for call in self.runner.call_args_list]
+        self.assertFalse(any("build-for-testing" in command for command in commands))
+        self.assertEqual(sum("test-without-building" in command for command in commands), 4)
+
+    def test_test_contour_is_rejected_without_external_calls(self):
+        with self.assertRaisesRegex(BuildError, "только для local"):
+            self.manager.run("integration", "test", "SIM-1")
+        self.runner.assert_not_called()
+
+    def test_fingerprint_ignores_python_bytecode_but_tracks_sources(self):
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        source = scripts / "example.py"
+        source.write_text("value = 1")
+        fingerprint = self.manager.fingerprint("SIM-1")
+        cache = scripts / "__pycache__"
+        cache.mkdir()
+        (cache / "example.cpython-312.pyc").write_bytes(b"bytecode one")
+        self.assertEqual(self.manager.fingerprint("SIM-1"), fingerprint)
+        (cache / "example.cpython-312.pyc").write_bytes(b"bytecode two")
+        self.assertEqual(self.manager.fingerprint("SIM-1"), fingerprint)
+        source.write_text("value = 2")
+        self.assertNotEqual(self.manager.fingerprint("SIM-1"), fingerprint)
 
     def test_skip_build_rejects_changed_sources(self):
         self.manager.run("unit", "local", "SIM-1")
@@ -126,7 +125,7 @@ class BuildManagerTests(unittest.TestCase):
         self.assertTrue(second.is_dir())
 
     def test_xctestrun_copy_keeps_xcode_relative_product_paths(self):
-        self.manager.run("ui", "test", "SIM-1")
+        self.manager.run("ui", "local", "SIM-1")
         source = next(
             path for path in self.root.glob(".artifacts/builds/*/DerivedData/Build/Products/*.xctestrun")
             if "-zdeep-run-" not in path.name
@@ -141,7 +140,7 @@ class BuildManagerTests(unittest.TestCase):
         self.assertEqual(result["TestBundlePath"], "__TESTROOT__/PlugIns/ZDEEPTests.xctest")
         self.assertEqual(result["TestHostPath"], "__TESTROOT__/ZDEEP.app/ZDEEP")
         self.assertEqual(result["UITargetAppPath"], "__TESTROOT__/ZDEEP.app")
-        self.assertEqual(result["EnvironmentVariables"], {"ORIGINAL_FLAG": "kept", "ZDEEP_ENVIRONMENT": "test"})
+        self.assertEqual(result["EnvironmentVariables"], {"ORIGINAL_FLAG": "kept", "ZDEEP_ENVIRONMENT": "local"})
         self.assertEqual(source.read_bytes(), original_bytes)
         self.assertEqual(self.manager.build("SIM-1"), source.resolve())
 
@@ -250,6 +249,49 @@ class BuildManagerTests(unittest.TestCase):
         with self.assertRaisesRegex(BuildError, "ноль выполненных тестов"):
             self.manager.run("unit", "local", "SIM-1")
 
+    def test_failed_and_skipped_cases_are_rejected(self):
+        for result in ("Failed", "Skipped"):
+            with self.subTest(result=result):
+                report = {"testNodes": [
+                    {"nodeType": "Test Case", "nodeIdentifier": "passed()", "result": "Passed"},
+                    {"nodeType": "Test Case", "nodeIdentifier": "example()", "result": result},
+                ]}
+                with self.assertRaisesRegex(BuildError, result):
+                    self.manager.validate_test_report(report)
+
+    def test_malformed_test_reports_are_rejected(self):
+        for report in ({}, {"testNodes": "invalid"}, None):
+            with self.subTest(report=report):
+                with self.assertRaises(BuildError):
+                    self.manager.validate_test_report(report)
+
+    def test_xcodebuild_failure_includes_created_run_and_bundle_paths(self):
+        self.runner.side_effect = lambda command, **kwargs: (
+            (_ for _ in ()).throw(subprocess.CalledProcessError(65, command))
+            if "test-without-building" in command else self.fake_xcodebuild(command, **kwargs)
+        )
+        with self.assertRaises(BuildError) as raised:
+            self.manager.run("unit", "local", "SIM-1")
+        results = next(self.root.glob(".artifacts/runs/*"))
+        self.assertIn(str(results), str(raised.exception))
+        self.assertIn(str(results / "Tests.xcresult"), str(raised.exception))
+
+    def test_incomplete_result_bundle_has_distinct_error(self):
+        self.runner.side_effect = lambda command, **kwargs: (
+            (_ for _ in ()).throw(subprocess.CalledProcessError(65, command))
+            if command[:3] == ["xcrun", "xcresulttool", "get"] else self.fake_xcodebuild(command, **kwargs)
+        )
+        with self.assertRaisesRegex(BuildError, "Не удалось прочитать xcresult"):
+            self.manager.run("unit", "local", "SIM-1")
+
+    def test_invalid_result_json_is_rejected(self):
+        self.runner.side_effect = lambda command, **kwargs: (
+            Mock(returncode=0, stdout="not json")
+            if command[:3] == ["xcrun", "xcresulttool", "get"] else self.fake_xcodebuild(command, **kwargs)
+        )
+        with self.assertRaisesRegex(BuildError, "некорректный JSON"):
+            self.manager.run("unit", "local", "SIM-1")
+
     def test_only_filter_must_match_exactly_one_reported_case(self):
         with self.assertRaisesRegex(BuildError, "не совпал с ровно одним тестом в xcresult"):
             self.manager.run("unit", "local", "SIM-1", only="ZDEEPTests/missing()")
@@ -275,7 +317,7 @@ class BuildManagerTests(unittest.TestCase):
             "nodeIdentifier": integration_id,
             "result": "Passed",
         }]
-        self.manager.run("integration", "test", "SIM-1", only=integration_id)
+        self.manager.run("integration", "local", "SIM-1", only=integration_id)
         command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
         self.assertIn(f"-only-testing:ZDEEPTests/{integration_id}", command)
 
@@ -286,13 +328,13 @@ class BuildManagerTests(unittest.TestCase):
             "nodeIdentifier": integration_id,
             "result": "Passed",
         }]
-        self.manager.run("integration", "test", "SIM-1", only=f"ZDEEPTests/{integration_id}")
+        self.manager.run("integration", "local", "SIM-1", only=f"ZDEEPTests/{integration_id}")
         command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
         self.assertIn(f"-only-testing:ZDEEPTests/{integration_id}", command)
 
     def test_integration_only_rejects_suite_identifier_without_test_name(self):
         with self.assertRaisesRegex(BuildError, "не принадлежит WebSessionIntegrationTests"):
-            self.manager.run("integration", "test", "SIM-1", only="WebSessionIntegrationTests/")
+            self.manager.run("integration", "local", "SIM-1", only="WebSessionIntegrationTests/")
         self.runner.assert_not_called()
 
 

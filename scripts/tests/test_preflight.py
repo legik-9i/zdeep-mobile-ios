@@ -36,6 +36,16 @@ class PreflightTests(unittest.TestCase):
                     main(command)
             request.assert_not_called()
 
+    def test_test_contour_is_rejected_without_external_calls(self):
+        with patch("zdeep.preflight") as request, redirect_stderr(StringIO()):
+            for command in (
+                ["preflight", "--environment", "test"],
+                ["test", "--environment", "test", "--suite", "integration"],
+            ):
+                with self.subTest(command=command), self.assertRaises(SystemExit):
+                    main(command)
+            request.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
