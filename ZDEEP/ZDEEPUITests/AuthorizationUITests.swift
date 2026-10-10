@@ -26,7 +26,9 @@ final class AuthorizationUITests: XCTestCase {
     @MainActor
     func test_syntheticQrStartsSingleRegistrationAndCancelReturnsToWelcome() {
         let app = launchAuthorizationFixture("authorized")
-        app.buttons["Сканировать QR-код"].tap()
+        let scan = app.buttons["Сканировать QR-код"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 5), "Сценарий authorized должен открывать приветствие")
+        scan.tap()
         let scanResult = app.buttons["synthetic-scan-result"]
         XCTAssertTrue(scanResult.waitForExistence(timeout: 5))
         scanResult.tap()

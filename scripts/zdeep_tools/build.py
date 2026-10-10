@@ -192,6 +192,8 @@ class BuildManager:
             integration_selector = f"{target_prefix}{result_only}"
         elif only is not None and suite == "unit":
             result_only = only.removeprefix("ZDEEPTests/")
+        elif only is not None and suite == "ui":
+            result_only = only.removeprefix("ZDEEPUITests/")
         code_signing = True
         fingerprint = self.fingerprint(simulator, code_signing=code_signing)
         if skip_build:

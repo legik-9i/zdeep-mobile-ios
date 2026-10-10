@@ -52,6 +52,7 @@
 			isa = PBXFrameworksBuildPhase;
 			files = (
 				A10000000000000000000004 /* CodeScanner in Frameworks */,
+				A10000000000000000000007 /* ThinkingOrbsKit in Frameworks */,
 			);
 		};
 		7C83CE34306F6FCA00F39E01 /* Frameworks */ = {
@@ -109,6 +110,7 @@
 			productType = "com.apple.product-type.application";
 			packageProductDependencies = (
 				A10000000000000000000003 /* CodeScanner */,
+				A10000000000000000000006 /* ThinkingOrbsKit */,
 			);
 		};
 		7C83CE36306F6FCA00F39E01 /* ZDEEPTests */ = {
@@ -187,6 +189,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */,
+				A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries.dev" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7C83CE2B306F6FC900F39E01 /* Products */;
@@ -214,6 +217,23 @@
 		A10000000000000000000004 /* CodeScanner in Frameworks */ = {
 			isa = PBXBuildFile;
 			productRef = A10000000000000000000003 /* CodeScanner */;
+		};
+		A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries.dev" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Jakubantalik/Libraries.dev";
+			requirement = {
+				kind = revision;
+				revision = bcaf88f8a16a75fd95bf21e0747193ee3380a927;
+			};
+		};
+		A10000000000000000000006 /* ThinkingOrbsKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = ThinkingOrbsKit;
+		};
+		A10000000000000000000007 /* ThinkingOrbsKit in Frameworks */ = {
+			isa = PBXBuildFile;
+			productRef = A10000000000000000000006 /* ThinkingOrbsKit */;
 		};
 /* End PBXProject section */
 
