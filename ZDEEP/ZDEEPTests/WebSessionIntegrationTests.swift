@@ -1,13 +1,13 @@
 import Foundation
 import Testing
+import WebKit
 @testable import ZDEEP
 
 @MainActor
 @Suite(.serialized)
 struct WebSessionIntegrationTests {
     private var environment: AppEnvironment {
-        let rawValue = ProcessInfo.processInfo.environment["ZDEEP_ENVIRONMENT"] ?? "local"
-        return AppEnvironment(rawValue: rawValue) ?? .local
+        .local
     }
 
     @Test func test_real_web_url_and_native_object() async throws {
@@ -194,7 +194,10 @@ struct WebSessionIntegrationTests {
             "const form = document.createElement('form'); form.action = 'mailto:help@example.com'; document.body.append(form); form.requestSubmit(); true",
             timeout: .seconds(5)
         )
-        try await Task.sleep(for: .milliseconds(250))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !failed, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
 
         #expect(failed)
         #expect(session.currentDocument == document)
@@ -240,13 +243,21 @@ struct WebSessionIntegrationTests {
             timeout: .seconds(5)
         )
 
+        let startObserver = JavaScriptStartObserver()
+        let contentController = session.webView.configuration.userContentController
+        contentController.add(startObserver, contentWorld: .page, name: "pendingResultStarted")
         let pendingResult = Task {
             try await session.executeJavaScript(
-                "new Promise(resolve => setTimeout(() => resolve('late'), 1500))",
+                "window.webkit.messageHandlers.pendingResultStarted.postMessage(true); new Promise(resolve => setTimeout(() => resolve('late'), 1500))",
                 timeout: .seconds(5)
             )
         }
-        try await Task.sleep(for: .milliseconds(100))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !startObserver.didReceiveStart, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        contentController.removeScriptMessageHandler(forName: "pendingResultStarted", contentWorld: .page)
+        #expect(startObserver.didReceiveStart)
         session.close()
 
         do {
@@ -299,14 +310,31 @@ struct WebSessionIntegrationTests {
 
     private func makeLoadedSession() async throws -> WebSession {
         let session = WebSession()
-        session.load(url: environment.endpoints.web)
-        _ = try await session.waitForJavaScript(
-            "document.readyState",
-            equals: .string("complete"),
-            timeout: .seconds(60)
-        )
-        return session
+        do {
+            let fixture = try #require(
+                Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")
+            )
+            session.load(url: fixture)
+            _ = try await session.waitForJavaScript(
+                "document.readyState",
+                equals: .string("complete"),
+                timeout: .seconds(5)
+            )
+            return session
+        } catch {
+            session.close()
+            throw error
+        }
     }
 }
 
 private final class HostedFixtureBundleMarker: NSObject {}
+
+@MainActor
+private final class JavaScriptStartObserver: NSObject, WKScriptMessageHandler {
+    private(set) var didReceiveStart = false
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        didReceiveStart = true
+    }
+}
