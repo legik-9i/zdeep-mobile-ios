@@ -171,8 +171,8 @@ nonisolated enum LocalAuthFixture {
         try makeJWT(claims: ["carId": carId, "aud": "zdeep-car", "exp": 1_900])
     }
 
-    static func fetchFreshCarToken() async throws -> String {
-        let url = URL(string: "http://localhost:4002/get-tmp-test-car-token")!
+    static func fetchFreshCarToken(backend: URL) async throws -> String {
+        let url = backend.appendingPathComponent("get-tmp-test-car-token")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
