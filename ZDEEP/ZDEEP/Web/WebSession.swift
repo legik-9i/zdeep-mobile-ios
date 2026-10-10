@@ -53,6 +53,9 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         configuration.userContentController = contentController
         configuration.websiteDataStore = .default()
         webView = WKWebView(frame: .zero, configuration: configuration)
+#if DEBUG
+        webView.isInspectable = true
+#endif
         webView.allowsBackForwardNavigationGestures = false
         self.trustedURL = trustedURL
         self.openExternalURL = openExternalURL ?? { url in
@@ -304,12 +307,12 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     }
 
     func trusts(_ origin: WKSecurityOrigin) -> Bool {
-        guard let trustedURL,
-              let components = URLComponents(url: trustedURL, resolvingAgainstBaseURL: false),
-              origin.protocol == components.scheme,
-              origin.host == components.host else { return false }
-        let port = components.port ?? (components.scheme == "https" ? 443 : 80)
-        return origin.port == port
+        WebNavigationPolicy.sameOrigin(
+            securityOriginProtocol: origin.protocol,
+            host: origin.host,
+            reportedPort: origin.port,
+            trustedURL: trustedURL
+        )
     }
 
     private func failCurrentDocument(_ message: String, status: Int? = nil) {

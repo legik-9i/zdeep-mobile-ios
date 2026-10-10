@@ -67,6 +67,25 @@ enum WebNavigationPolicy {
             && leftPort == rightPort
     }
 
+    static func sameOrigin(
+        securityOriginProtocol: String,
+        host: String,
+        reportedPort: Int,
+        trustedURL: URL?
+    ) -> Bool {
+        guard let trustedURL,
+              let trusted = URLComponents(url: trustedURL, resolvingAgainstBaseURL: false),
+              let trustedScheme = trusted.scheme?.lowercased(),
+              let trustedHost = trusted.host?.lowercased(),
+              let trustedPort = effectivePort(trusted),
+              securityOriginProtocol.lowercased() == trustedScheme,
+              host.lowercased() == trustedHost else { return false }
+        let originPort = reportedPort == 0
+            ? (trustedScheme == "https" ? 443 : 80)
+            : reportedPort
+        return originPort == trustedPort
+    }
+
     private static func effectivePort(_ components: URLComponents) -> Int? {
         if let port = components.port { return port }
         switch components.scheme?.lowercased() {

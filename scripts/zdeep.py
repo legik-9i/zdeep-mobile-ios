@@ -45,14 +45,14 @@ def parser():
     commands = root.add_subparsers(dest="command", required=True)
     build = commands.add_parser("build-tests", help="Собрать тестовые targets")
     build.add_argument("--simulator", required=True, help="UDID симулятора")
-    test = commands.add_parser("test", help="Запустить тесты local или test")
-    test.add_argument("--environment", choices=["local", "test"], required=True)
+    test = commands.add_parser("test", help="Запустить автоматические тесты в local")
+    test.add_argument("--environment", choices=["local"], required=True)
     test.add_argument("--suite", choices=["unit", "integration", "ui", "all"], required=True)
     test.add_argument("--only", help="nodeIdentifier из xcresult, например WebSessionIntegrationTests/test_example()")
     test.add_argument("--skip-build", action="store_true")
     test.add_argument("--simulator", help="UDID, переопределяет конфигурацию")
     pre = commands.add_parser("preflight", help="Проверить доступность выбранного API")
-    pre.add_argument("--environment", choices=["local", "test"], required=True)
+    pre.add_argument("--environment", choices=["local"], required=True)
     pre.add_argument("--suite", choices=["unit", "integration", "ui", "all"], default="integration")
     install = commands.add_parser("device-install", help="Собрать Debug и установить его на iPhone")
     install.add_argument("--device", help="UDID устройства; по умолчанию берётся из .local/development.json")
@@ -90,7 +90,7 @@ def main(argv=None):
             if args.suite == "unit":
                 print("Для unit-набора проверка доступности API не требуется")
             else:
-                print(preflight(args.environment, args.suite, config["api"][args.environment]))
+                print(preflight(args.environment, args.suite, config["api"][args.environment], web_url=config["web"][args.environment]))
         elif args.command == "test":
             simulator = args.simulator or config.get("simulator")
             if not simulator:
@@ -98,7 +98,7 @@ def main(argv=None):
             if args.suite == "unit":
                 print("Для unit-набора проверка доступности API не требуется")
             else:
-                print(preflight(args.environment, args.suite, config["api"][args.environment]))
+                print(preflight(args.environment, args.suite, config["api"][args.environment], web_url=config["web"][args.environment]))
             runtime_settings = {
                 "ZDEEP_ENVIRONMENT": args.environment,
                 "ZDEEP_WEB_URL": config["web"][args.environment],
@@ -121,7 +121,7 @@ def main(argv=None):
             if not simulator:
                 raise DiagnosticError("Укажите --simulator или simulator в .local/development.json")
             if args.environment == "local":
-                print(preflight("local", "integration", config["api"]["local"]))
+                print(preflight("local", "integration", config["api"]["local"], web_url=config["web"]["local"]))
             DiagnosticManager(ROOT).simulator_launch(
                 simulator, args.environment,
                 config["web"][args.environment], config["api"][args.environment]
@@ -139,7 +139,7 @@ def main(argv=None):
             if args.target == "device" and args.environment != "test":
                 raise DiagnosticError("Диагностика физического устройства разрешена только в test")
             if args.target == "simulator" and args.environment == "local":
-                print(preflight("local", "integration", config["api"]["local"]))
+                print(preflight("local", "integration", config["api"]["local"], web_url=config["web"]["local"]))
             response = DiagnosticManager(ROOT).diagnose(
                 args.target, target_id, javascript, args.timeout,
                 environment=args.environment,

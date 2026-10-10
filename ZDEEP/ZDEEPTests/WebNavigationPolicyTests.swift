@@ -8,6 +8,21 @@ import Testing
 struct WebNavigationPolicyTests {
     private let origin = URL(string: "https://app.example:443/home")!
 
+    @Test func test_security_origin_uses_default_port_when_reported_port_is_zero() {
+        #expect(WebNavigationPolicy.sameOrigin(
+            securityOriginProtocol: "https",
+            host: "app.example",
+            reportedPort: 0,
+            trustedURL: origin
+        ))
+        #expect(!WebNavigationPolicy.sameOrigin(
+            securityOriginProtocol: "https",
+            host: "app.example",
+            reportedPort: 444,
+            trustedURL: origin
+        ))
+    }
+
     @Test func test_same_origin_uses_scheme_host_and_effective_port() {
         #expect(WebNavigationPolicy.decide(
             url: URL(string: "https://APP.example/path")!, trustedURL: origin,

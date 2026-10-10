@@ -30,14 +30,21 @@ class BuildManager:
         except (OSError, subprocess.CalledProcessError) as exc:
             raise BuildError(f"Не удалось получить версию Xcode: {exc}") from exc
 
-    def fingerprint(self, simulator: str, code_signing: bool = False) -> str:
+    def fingerprint(self, simulator: str, code_signing: bool = True) -> str:
         digest = hashlib.sha256()
         included = (self.root / "ZDEEP", self.root / "scripts")
         for base in included:
             if base.is_file():
                 paths = [base]
             elif base.exists():
-                paths = sorted(path for path in base.rglob("*") if path.is_file() and ".artifacts" not in path.parts)
+                paths = sorted(
+                    path for path in base.rglob("*")
+                    if path.is_file()
+                    and ".artifacts" not in path.parts
+                    and "__pycache__" not in path.parts
+                    and path.suffix not in {".pyc", ".pyo"}
+                    and path.name != ".DS_Store"
+                )
             else:
                 continue
             for path in paths:
@@ -59,7 +66,7 @@ class BuildManager:
         path.mkdir()
         return path
 
-    def build(self, simulator: str, code_signing: bool = False) -> Path:
+    def build(self, simulator: str, code_signing: bool = True) -> Path:
         fingerprint = self.fingerprint(simulator, code_signing=code_signing)
         destination = self.builds / fingerprint
         derived = destination / "DerivedData"
@@ -111,19 +118,35 @@ class BuildManager:
 
     @staticmethod
     def validate_test_report(report: dict, only: str | None = None) -> list[dict]:
+        if not isinstance(report, dict) or not isinstance(report.get("testNodes"), list):
+            raise BuildError("xcresult содержит некорректный отчёт тестов")
         nodes = []
 
         def visit(node):
             if not isinstance(node, dict):
-                return
+                raise BuildError("xcresult содержит некорректный узел тестов")
             nodes.append(node)
-            for child in node.get("children", []):
+            children = node.get("children", [])
+            if not isinstance(children, list):
+                raise BuildError("xcresult содержит некорректный список тестов")
+            for child in children:
                 visit(child)
 
         for node in report.get("testNodes", []):
             visit(node)
 
         test_cases = [node for node in nodes if node.get("nodeType") == "Test Case"]
+        valid_results = {"Passed", "Failed", "Expected Failure", "Skipped"}
+        for node in test_cases:
+            result = node.get("result")
+            if not isinstance(result, str) or result not in valid_results:
+                raise BuildError("xcresult содержит некорректный результат теста")
+        failed = [node for node in test_cases if node.get("result") == "Failed"]
+        if failed:
+            raise BuildError(f"xcresult содержит Failed: {failed[0].get('nodeIdentifier', '<unknown>')}")
+        skipped = [node for node in test_cases if node.get("result") == "Skipped"]
+        if skipped:
+            raise BuildError(f"xcresult содержит неожиданный Skipped: {skipped[0].get('nodeIdentifier', '<unknown>')}")
         executed = [
             node for node in test_cases
             if node.get("result") in {"Passed", "Failed", "Expected Failure"}
@@ -143,18 +166,21 @@ class BuildManager:
         try:
             result = self.runner(command, cwd=self.root, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as exc:
-            raise BuildError(f"Не удалось прочитать xcresult: xcresulttool завершился с кодом {exc.returncode}") from exc
+            raise BuildError(
+                f"Не удалось прочитать xcresult {result_bundle}: "
+                f"xcresulttool завершился с кодом {exc.returncode}"
+            ) from exc
         try:
             report = json.loads(result.stdout)
         except (AttributeError, json.JSONDecodeError) as exc:
-            raise BuildError(f"xcresulttool вернул некорректный JSON: {exc}") from exc
+            raise BuildError(f"xcresulttool вернул некорректный JSON для {result_bundle}: {exc}") from exc
         return self.validate_test_report(report, only)
 
     def run(self, suite: str, environment: str, simulator: str, only: str | None = None, skip_build: bool = False, runtime_settings: dict[str, str] | None = None) -> Path:
         if suite not in {"unit", "integration", "ui", "all"}:
             raise BuildError(f"Неизвестный набор тестов: {suite}")
-        if environment not in {"local", "test"}:
-            raise BuildError("Тестовый запуск разрешён только для local или test")
+        if environment != "local":
+            raise BuildError("Тестовый запуск разрешён только для local")
         result_only = only
         integration_selector = None
         if only is not None and suite == "integration":
@@ -166,7 +192,7 @@ class BuildManager:
             integration_selector = f"{target_prefix}{result_only}"
         elif only is not None and suite == "unit":
             result_only = only.removeprefix("ZDEEPTests/")
-        code_signing = suite in {"unit", "integration", "all"} and environment == "local"
+        code_signing = True
         fingerprint = self.fingerprint(simulator, code_signing=code_signing)
         if skip_build:
             artifact = self.cache.get(fingerprint)
@@ -179,12 +205,10 @@ class BuildManager:
                             artifact = candidate
                             break
             if artifact is None:
-                if code_signing:
-                    raise BuildError(
-                        f"Нет актуальной подписанной Simulator-сборки для {suite}/local; "
-                        "запустите `test` без `--skip-build` (команда `build-tests` создаёт сборку без подписи)"
-                    )
-                raise BuildError("Нет актуальной сборки для этих исходников; выполните build-tests")
+                raise BuildError(
+                    f"Нет актуальной подписанной Simulator-сборки для {suite}/local; "
+                    "запустите `build-tests` или `test` без `--skip-build`"
+                )
         else:
             artifact = self.build(simulator, code_signing=code_signing)
 
@@ -213,6 +237,12 @@ class BuildManager:
                 command.append("-skip-testing:ZDEEPTests/WebSessionIntegrationTests")
             selected_target = target if integration_selector is not None else target + ("/" + result_only if result_only else "")
             command.append(f"-only-testing:{selected_target}")
-        self.runner(command, cwd=self.root, check=True)
+        try:
+            self.runner(command, cwd=self.root, check=True)
+        except subprocess.CalledProcessError as exc:
+            raise BuildError(
+                f"xcodebuild test завершился с кодом {exc.returncode}; "
+                f"run: {results}; result bundle: {results / 'Tests.xcresult'}"
+            ) from exc
         self._validate_result_bundle(results / "Tests.xcresult", result_only)
         return results

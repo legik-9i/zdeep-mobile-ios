@@ -20,6 +20,11 @@ struct EnvironmentTests {
         #expect(AppEnvironment.test.endpoints.backend.absoluteString == "https://api.zdeep.ru/testing/")
     }
 
+    @Test func test_default_environment_matches_build_destination() {
+        #expect(LaunchConfiguration.defaultEnvironment(isSimulator: true) == .local)
+        #expect(LaunchConfiguration.defaultEnvironment(isSimulator: false) == .test)
+    }
+
     @Test func test_launch_configuration_selects_environment_and_local_overrides() {
         let configuration = LaunchConfiguration(
             arguments: ["--environment", "local", "--web-url", "http://127.0.0.1:9000", "--api-url", "http://127.0.0.1:9001"],

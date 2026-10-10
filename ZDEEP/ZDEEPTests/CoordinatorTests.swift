@@ -883,9 +883,13 @@ struct CoordinatorTests {
 
     @Test func test_select_prod_does_not_load_web() async {
         let factory = FakeWebSessionFactory()
+        let adapters = Self.makeOwnedDataAdapters()
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            sessionFactory: factory
+            sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager(),
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
 
         await coordinator.switchEnvironment(to: .prod)
@@ -893,6 +897,9 @@ struct CoordinatorTests {
         #expect(coordinator.environment == .prod)
         #expect(!coordinator.isWebViewOpen)
         #expect(factory.sessions.isEmpty)
+        for adapter in adapters.values {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 1)
+        }
     }
 
     @Test func test_environment_cleanup_failure_keeps_old_configuration_and_target() async {
@@ -905,6 +912,7 @@ struct CoordinatorTests {
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
             sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
             sessionManager: manager,
             ownedClientDataCleaner: cleaner
         )
@@ -915,6 +923,9 @@ struct CoordinatorTests {
         #expect(coordinator.endpoints == AppEnvironment.local.endpoints)
         #expect(manager.currentSession == nil)
         #expect(factory.sessions.isEmpty)
+        for adapter in adapters.values {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 1)
+        }
         guard case .error(.retryable(_, context: .environment(
             let target, let previous, let stage, let progress
         ))) = coordinator.screen else {
@@ -929,15 +940,21 @@ struct CoordinatorTests {
 
     @Test func test_same_scope_switch_still_discards_memory_jwt_and_old_document() async {
         let factory = FakeWebSessionFactory()
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "car")
+        let adapters = Self.makeOwnedDataAdapters()
         let manager = CoordinatorSessionManager()
         manager.currentSession = Self.fixtureSession()
         manager.hasPublishedSession = true
+        manager.updateSucceeds = true
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "test"], variables: [:]),
             sessionFactory: factory,
-            sessionManager: manager
+            bindingStore: CoordinatorBindingStore(result: .success(binding)),
+            sessionManager: manager,
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
         await coordinator.start()
+        #expect(coordinator.restoredBinding == binding)
         let scenarioID = coordinator.activeScenarioID
         if let scenarioID { coordinator.nativeFirstFrameDidRender(scenarioID: scenarioID) }
         coordinator.openWebView()
@@ -950,6 +967,9 @@ struct CoordinatorTests {
         #expect(oldSession?.closeCount == 1)
         #expect(coordinator.activeWebSession == nil)
         #expect(!coordinator.isWebViewOpen)
+        for adapter in adapters.values {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 0)
+        }
     }
 
     @Test func test_stale_restore_after_two_environment_switches_cannot_replace_latest_scenario() async {
@@ -1090,8 +1110,11 @@ struct CoordinatorTests {
         let adapters = Self.makeOwnedDataAdapters(failing: .keychain)
         let cleaner = OwnedClientDataCleaner(adapters: adapters)
         let manager = CoordinatorSessionManager()
+        let factory = FakeWebSessionFactory()
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
+            sessionFactory: factory,
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
             sessionManager: manager,
             ownedClientDataCleaner: cleaner
         )
@@ -1108,6 +1131,7 @@ struct CoordinatorTests {
         await coordinator.retry()
 
         #expect(coordinator.screen == .welcome)
+        #expect(coordinator.restoredBinding == nil)
         #expect(manager.updateCount == 0)
         for (category, adapter) in adapters {
             #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == (category == .keychain ? 2 : 1))
@@ -1197,13 +1221,18 @@ struct CoordinatorTests {
 
     @Test func test_cross_database_switch_requests_clear() async {
         let adapters = Self.makeOwnedDataAdapters()
+        let coordinatorBindingStore = CoordinatorBindingStore(result: .success(nil))
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
+            sessionFactory: FakeWebSessionFactory(),
+            bindingStore: coordinatorBindingStore,
+            sessionManager: CoordinatorSessionManager(),
             ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
         await coordinator.switchEnvironment(to: .test)
 
         #expect(coordinator.environment == .test)
+        #expect(coordinator.restoredBinding == nil)
         #expect(!coordinator.isWebViewOpen)
         for adapter in adapters.values {
             #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 1)
@@ -1214,9 +1243,12 @@ struct CoordinatorTests {
         let factory = FakeWebSessionFactory()
         let gate = TestSaveGate()
         let adapters = Self.makeOwnedDataAdapters(blocking: .keychain, gate: gate)
+        let coordinatorBindingStore = CoordinatorBindingStore(result: .success(nil))
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
             sessionFactory: factory,
+            bindingStore: coordinatorBindingStore,
+            sessionManager: CoordinatorSessionManager(),
             ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
 
@@ -1233,15 +1265,23 @@ struct CoordinatorTests {
         #expect(panel.isEnvironmentPickerEnabled)
 
         #expect(coordinator.environment == .test)
+        #expect(coordinator.restoredBinding == nil)
         #expect(!coordinator.isTransitioning)
         #expect(!coordinator.isWebViewOpen)
         #expect(factory.sessions.isEmpty)
+        for adapter in adapters.values {
+            #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 1)
+        }
     }
 
     @Test func test_test_prod_switch_preserves_store() async {
         let adapters = Self.makeOwnedDataAdapters()
+        let coordinatorBindingStore = CoordinatorBindingStore(result: .success(nil))
         let coordinator = AppCoordinator(
             configuration: LaunchConfiguration(arguments: ["--environment", "test"], variables: [:]),
+            sessionFactory: FakeWebSessionFactory(),
+            bindingStore: coordinatorBindingStore,
+            sessionManager: CoordinatorSessionManager(),
             ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
         )
 

@@ -1,19 +1,37 @@
 import Foundation
 import Testing
+import WebKit
 @testable import ZDEEP
 
 @MainActor
 @Suite(.serialized)
 struct WebSessionIntegrationTests {
     private var environment: AppEnvironment {
-        let rawValue = ProcessInfo.processInfo.environment["ZDEEP_ENVIRONMENT"] ?? "local"
-        return AppEnvironment(rawValue: rawValue) ?? .local
+        .local
+    }
+
+    private var launchConfiguration: LaunchConfiguration {
+        LaunchConfiguration(
+            arguments: ["--environment", environment.rawValue],
+            variables: ProcessInfo.processInfo.environment
+        )
+    }
+
+    var endpoints: EnvironmentEndpoints {
+        launchConfiguration.endpoints(for: environment)
+    }
+
+    @Test func test_local_endpoints_follow_runner_overrides() throws {
+        let configuredWeb = try #require(ProcessInfo.processInfo.environment["ZDEEP_WEB_URL"])
+        let configuredAPI = try #require(ProcessInfo.processInfo.environment["ZDEEP_API_URL"])
+        #expect(endpoints.web.absoluteString == configuredWeb)
+        #expect(endpoints.backend.absoluteString == configuredAPI)
     }
 
     @Test func test_real_web_url_and_native_object() async throws {
         let session = WebSession()
         defer { session.close() }
-        session.load(url: environment.endpoints.web)
+        session.load(url: endpoints.web)
 
         _ = try await session.waitForJavaScript(
             "document.readyState",
@@ -23,14 +41,14 @@ struct WebSessionIntegrationTests {
         let location = try await session.executeJavaScript("location.href", timeout: .seconds(10))
         let nativeType = try await session.executeJavaScript("typeof window.ZdeepNative", timeout: .seconds(10))
 
-        #expect(session.requestedURL == environment.endpoints.web)
+        #expect(session.requestedURL == endpoints.web)
         guard case .string(let pageURL) = location else {
             Issue.record("Expected location.href to be a string")
             return
         }
-        #expect(URL(string: pageURL)?.scheme == environment.endpoints.web.scheme)
-        #expect(URL(string: pageURL)?.host == environment.endpoints.web.host)
-        #expect(session.redirectChain.first == environment.endpoints.web)
+        #expect(URL(string: pageURL)?.scheme == endpoints.web.scheme)
+        #expect(URL(string: pageURL)?.host == endpoints.web.host)
+        #expect(session.redirectChain.first == endpoints.web)
         #expect(session.redirectChain.last == session.currentURL)
         #expect(session.responseStatusCode.map { (200..<400).contains($0) } == true)
         #expect(nativeType == .string("object"))
@@ -194,7 +212,10 @@ struct WebSessionIntegrationTests {
             "const form = document.createElement('form'); form.action = 'mailto:help@example.com'; document.body.append(form); form.requestSubmit(); true",
             timeout: .seconds(5)
         )
-        try await Task.sleep(for: .milliseconds(250))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !failed, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
 
         #expect(failed)
         #expect(session.currentDocument == document)
@@ -240,13 +261,21 @@ struct WebSessionIntegrationTests {
             timeout: .seconds(5)
         )
 
+        let startObserver = JavaScriptStartObserver()
+        let contentController = session.webView.configuration.userContentController
+        contentController.add(startObserver, contentWorld: .page, name: "pendingResultStarted")
         let pendingResult = Task {
             try await session.executeJavaScript(
-                "new Promise(resolve => setTimeout(() => resolve('late'), 1500))",
+                "window.webkit.messageHandlers.pendingResultStarted.postMessage(true); new Promise(resolve => setTimeout(() => resolve('late'), 1500))",
                 timeout: .seconds(5)
             )
         }
-        try await Task.sleep(for: .milliseconds(100))
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !startObserver.didReceiveStart, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        contentController.removeScriptMessageHandler(forName: "pendingResultStarted", contentWorld: .page)
+        #expect(startObserver.didReceiveStart)
         session.close()
 
         do {
@@ -258,13 +287,10 @@ struct WebSessionIntegrationTests {
     }
 
     @Test func test_full_reset_clears_web_cookie_and_local_storage() async throws {
-        let coordinator = AppCoordinator(configuration: LaunchConfiguration(
-            arguments: ["--environment", environment.rawValue],
-            variables: [:]
-        ))
-        let initialSession = WebSession(trustedURL: environment.endpoints.web)
+        let coordinator = AppCoordinator(configuration: launchConfiguration)
+        let initialSession = WebSession(trustedURL: endpoints.web)
         defer { initialSession.close() }
-        initialSession.load(url: environment.endpoints.web)
+        initialSession.load(url: endpoints.web)
         _ = try await initialSession.waitForJavaScript(
             "document.readyState",
             equals: .string("complete"),
@@ -282,9 +308,9 @@ struct WebSessionIntegrationTests {
 
         initialSession.close()
         await coordinator.resetClientData()
-        let resetSession = WebSession(trustedURL: environment.endpoints.web)
+        let resetSession = WebSession(trustedURL: endpoints.web)
         defer { resetSession.close() }
-        resetSession.load(url: environment.endpoints.web)
+        resetSession.load(url: endpoints.web)
         _ = try await resetSession.waitForJavaScript(
             "document.readyState",
             equals: .string("complete"),
@@ -299,14 +325,31 @@ struct WebSessionIntegrationTests {
 
     private func makeLoadedSession() async throws -> WebSession {
         let session = WebSession()
-        session.load(url: environment.endpoints.web)
-        _ = try await session.waitForJavaScript(
-            "document.readyState",
-            equals: .string("complete"),
-            timeout: .seconds(60)
-        )
-        return session
+        do {
+            let fixture = try #require(
+                Bundle(for: HostedFixtureBundleMarker.self).url(forResource: "document-start", withExtension: "html")
+            )
+            session.load(url: fixture)
+            _ = try await session.waitForJavaScript(
+                "document.readyState",
+                equals: .string("complete"),
+                timeout: .seconds(5)
+            )
+            return session
+        } catch {
+            session.close()
+            throw error
+        }
     }
 }
 
 private final class HostedFixtureBundleMarker: NSObject {}
+
+@MainActor
+private final class JavaScriptStartObserver: NSObject, WKScriptMessageHandler {
+    private(set) var didReceiveStart = false
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        didReceiveStart = true
+    }
+}

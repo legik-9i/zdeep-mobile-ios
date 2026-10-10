@@ -10,7 +10,8 @@ description: Use when diagnosing a ZDEEP iPhone or simulator WebView, USB mailbo
 ## Ограничения контуров
 
 - Физический iPhone диагностируй только в `test`. Всегда передавай `--environment test`: CLI по умолчанию выбирает `local`, и команда на устройстве с этим значением будет отклонена.
-- Симулятор разрешено использовать в `local` и `test`. Для Local сначала проверь API `http://localhost:4002/health` → HTTP 200.
+- Симулятор разрешено использовать в `local` и `test`. Для диагностики в `local` CLI проверяет `GET /health` настроенного API и настроенный Web URL; оба должны вернуть HTTP 200.
+- Для диагностики в `test` — на симуляторе или iPhone — health-проверка и запрос к корню test API не нужны. На iPhone готовность WebView проверь вручную в приложении.
 - Не открывай WebView в `prod`, не отправляй запросы к продовым адресам.
 - Оставь приложение на переднем плане и WebView открытым, пока выполняется команда. Фоновый режим не включён.
 
@@ -61,6 +62,24 @@ printf '1+1\n' | python3 scripts/zdeep.py diagnose \
 Ожидаемый ответ — `2`. Чтобы проверить ошибки WebKit, читай структурированный результат команды и категорию события, а не ищи JS-текст в журнале. Не выводи секреты из страницы: произвольный JS может вернуть любые доступные ей данные.
 
 На симуляторе выбирай `--target simulator`, `--simulator <SIMULATOR_UDID>` и явно `--environment local` или `test`. `diagnose` — явное действие: если свежей сессии ещё нет, команда может открыть WebView на симуляторе. На физическом телефоне сначала вручную открой WebView.
+
+## Посмотри сетевые запросы WebView
+
+Журнал приложения показывает навигацию главного документа, но не запросы `fetch`/XHR страницы. Для первичной карты ресурсов выполни в активной Test WebView через `diagnose`:
+
+```js
+JSON.stringify(performance.getEntriesByType("resource").map(e => {
+  const u = new URL(e.name);
+  return {host: u.host, path: u.pathname, type: e.initiatorType,
+    status: e.responseStatus ?? null, durationMs: Math.round(e.duration)};
+}).filter(e => /graphql/i.test(e.path) || ["fetch", "xmlhttprequest"].includes(e.type)))
+```
+
+Не возвращай `search`, query string или полный URL. Cross-origin `responseStatus` может быть `null`, а `transferSize` — `0`; Resource Timing не раскрывает POST body и тело ответа. Не трактуй это как отсутствие запроса.
+
+Чтобы узнать GraphQL operation, переменные и ответ, используй Safari Web Inspector (Network) либо временный wrapper `window.fetch` в активной странице. Wrapper должен перехватывать только последующие вызовы, читать ответ через `response.clone()`, возвращать исходный response без изменений и сохранять только host/path, method, `operationName`, названия/типы переменных, HTTP status и безопасные поля `errors` (`message`, `extensions.code`) / имена ключей `data`. Не сохраняй целиком запрос/ответ, Authorization, cookies, токены или пользовательские значения. Устанавливай wrapper до воспроизведения действия; уже завершённые запросы он не увидит. При первом запросе страницы нужен Web Inspector или временный `WKUserScript` на `atDocumentStart` — wrapper из консоли исчезает при reload.
+
+Отделяй HTTP-статус от результата GraphQL: HTTP 200 всё ещё может содержать `errors` и частичные `data`. Например, сообщение `Argument "userId" of required type "ID!" was not provided.` указывает на отсутствующий обязательный аргумент GraphQL, а не на HTTP-сбой. Для `WKWebView` в Debug можно включить `webView.isInspectable = true`; на iPhone и Mac также должны быть разрешены Web Inspector / меню Develop.
 
 ## Разбери тайм-аут
 

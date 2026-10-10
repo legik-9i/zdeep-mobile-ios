@@ -129,7 +129,7 @@ extension WebSessionIntegrationTests {
     @Test func test_public_reload_reinjects_bridge_for_a_new_document() async throws {
         let manager = BridgeTestSessionManager()
         manager.currentSession = BridgeTestSessionManager.fixtureSession
-        let localWebURL = AppEnvironment.local.endpoints.web
+        let localWebURL = endpoints.web
         let session = WebSession(trustedURL: localWebURL)
         var readyDocuments: [UUID] = []
         let bridge = NativeBridge(session: session, manager: manager) { identity, _ in
@@ -138,6 +138,7 @@ extension WebSessionIntegrationTests {
         defer { bridge.close(); session.close() }
         session.load(url: localWebURL)
         _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(60))
+        #expect(session.requestedURL == endpoints.web)
 
         let firstDocument = try #require(session.currentDocument?.documentId)
         #expect(try await session.executeJavaScript("window.ZdeepNative.reportReady({screen:'content'}).then(() => true)", timeout: .seconds(10)) == .bool(true))
