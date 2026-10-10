@@ -145,6 +145,17 @@ class BuildManagerTests(unittest.TestCase):
         self.assertEqual(source.read_bytes(), original_bytes)
         self.assertEqual(self.manager.build("SIM-1"), source.resolve())
 
+    def test_ui_only_accepts_xcode_target_prefixed_node_identifier(self):
+        identifier = "AuthorizationUITests/test_example()"
+        self.test_report = {
+            "testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identifier, "result": "Passed"}]
+        }
+
+        self.manager.run("ui", "local", "SIM-1", only=f"ZDEEPUITests/{identifier}")
+
+        command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+        self.assertIn(f"-only-testing:ZDEEPUITests/{identifier}", command)
+
     def test_passive_host_flag_is_scoped_to_hosted_target(self):
         layouts = [
             {"TestConfigurations": [{"TestTargets": [
