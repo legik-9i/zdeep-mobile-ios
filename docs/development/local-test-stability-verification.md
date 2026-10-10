@@ -41,3 +41,19 @@ python3 scripts/zdeep.py test --environment local --suite all --simulator 0DDEE4
 - Bundle: `.artifacts/runs/20261010-054815-1791600495080249000/Tests.xcresult`.
 
 Оба result bundle оставлены для аудита. Этот единичный повтор подтверждает повторяемость на текущей сборке, но не гарантирует отсутствия будущих flakes. Автоматические retries и прогоны в `test` не использовались.
+
+## Фокусная допроверка после финального ревью
+
+После полного `all` и `--skip-build` на commit `e8d7e3f793131e2ef79525a258b0c284cd2e40e0` ревью обнаружило один пропуск в bridge smoke: `test_public_reload_reinjects_bridge_for_a_new_document()` загружал статический `AppEnvironment.local.endpoints.web`. Исправление использует общий `LaunchConfiguration` endpoint suite и проверяет `session.requestedURL == endpoints.web`.
+
+Сначала запуск с shell-переменными не создал RED: CLI `test` берёт URL из `.local/development.json` и подменил shell env настройками по умолчанию. Этот запуск не считается доказательством. Затем использовался временный `.local/development.json` с Web `http://127.0.0.1:4005` и API `http://127.0.0.1:4002`; strict local preflight подтвердил HTTP 200 для API `/health` и Web. RED-команда:
+
+```sh
+python3 scripts/zdeep.py test --environment local --suite integration --only 'WebSessionIntegrationTests/test_public_reload_reinjects_bridge_for_a_new_document()' --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A
+```
+
+Assertion упала: `session.requestedURL` было `http://localhost:4005`, ожидаемый настроенный URL — `http://127.0.0.1:4005`. Bundle: `.artifacts/runs/20261010-061131-1791601891279429000/Tests.xcresult`.
+
+После исправления та же команда с теми же overrides завершилась успешно: 1/1 passed; preflight снова подтвердил HTTP 200. Bundle: `.artifacts/runs/20261010-061244-1791601964219274000/Tests.xcresult`. Временный `.local/development.json` удалён. Полный suite не перезапускался: финальные полные bundles относятся к предыдущему test commit `e8d7e3f`; этот единственный изменённый callsite проверен целевым integration selector.
+
+Финальный review также подтвердил отложенное не блокирующее замечание Minor P3 из Task 2: `scripts/zdeep_tools/preflight.py:17` сравнивает origin без нормализации явного default port (`http://host` и `http://host:80`). Его оставили вне этой узкой правки; reviewer отметил отсутствие внешнего запроса/влияния на безопасность.

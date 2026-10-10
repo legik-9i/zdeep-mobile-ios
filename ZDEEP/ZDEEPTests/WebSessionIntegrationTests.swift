@@ -17,7 +17,7 @@ struct WebSessionIntegrationTests {
         )
     }
 
-    private var endpoints: EnvironmentEndpoints {
+    var endpoints: EnvironmentEndpoints {
         launchConfiguration.endpoints(for: environment)
     }
 
