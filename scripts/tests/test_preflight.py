@@ -85,9 +85,10 @@ class PreflightTests(unittest.TestCase):
         self.assertIn("unit", preflight("local", "unit", request=request))
         request.assert_not_called()
 
-    def test_redirect_is_checked_before_requesting_destination(self):
+    def test_any_redirect_is_rejected_before_requesting_destination(self):
         from zdeep_tools.preflight import _http_status
         external_hits = []
+        destination_hits = []
 
         class ExternalHandler(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -111,6 +112,10 @@ class PreflightTests(unittest.TestCase):
                     self.send_response(302)
                     self.send_header("Location", "/health")
                     self.end_headers()
+                elif self.path == "/health":
+                    destination_hits.append(self.path)
+                    self.send_response(200)
+                    self.end_headers()
                 else:
                     self.send_response(200)
                     self.end_headers()
@@ -125,9 +130,10 @@ class PreflightTests(unittest.TestCase):
             thread.start()
         try:
             local_url = f"http://127.0.0.1:{local.server_port}"
-            self.assertEqual(_http_status(local_url + "/redirect-local"), 200)
-            with self.assertRaises(PreflightError):
-                _http_status(local_url + "/redirect-out")
+            for path in ("/redirect-local", "/redirect-out"):
+                with self.subTest(path=path), self.assertRaises(PreflightError):
+                    _http_status(local_url + path)
+            self.assertEqual(destination_hits, [])
             self.assertEqual(external_hits, [])
         finally:
             for server in servers:

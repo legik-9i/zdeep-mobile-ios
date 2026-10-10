@@ -110,7 +110,7 @@ let nativeType = try await session.executeJavaScript(
 python3 scripts/zdeep.py preflight --environment local --suite integration
 ```
 
-Для сетевых наборов local preflight требует `GET /health` API и `GET` настроенного Web URL с HTTP 200. Любой другой статус, тайм-аут или транспортная ошибка блокирует запуск. Для unit preflight не обращается к сети. Test/preflight в `test` не поддерживаются.
+Для сетевых наборов local preflight требует прямой ответ HTTP 200 на `GET /health` API и `GET` настроенного Web URL. Любой redirect, другой статус, тайм-аут или транспортная ошибка блокирует запуск; redirect не выполняется. Для unit preflight не обращается к сети. Test/preflight в `test` не поддерживаются.
 
 При падении:
 

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import urllib.error
-import urllib.parse
 import urllib.request
 
 
@@ -9,32 +8,15 @@ class PreflightError(RuntimeError):
     pass
 
 
-def _origin(url: str) -> tuple[str, str, int | None]:
-    parsed = urllib.parse.urlsplit(url)
-    if not parsed.scheme or not parsed.hostname:
-        raise PreflightError(f"Некорректный адрес сервиса: {url}")
-    try:
-        return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port
-    except ValueError as exc:
-        raise PreflightError(f"Некорректный адрес сервиса: {url}") from exc
-
-
-class _LocalRedirectHandler(urllib.request.HTTPRedirectHandler):
-    def __init__(self, url: str):
-        super().__init__()
-        self.origin = _origin(url)
-
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        destination = urllib.parse.urljoin(req.full_url, newurl)
-        if _origin(destination) != self.origin:
-            raise PreflightError(f"Редирект сервиса покинул локальный контур: {destination}")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        raise PreflightError(f"Локальный preflight не принимает HTTP redirect: {code}")
 
 
 def _http_status(url: str, timeout: int = 5) -> int:
     request = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.build_opener(_LocalRedirectHandler(url)).open(request, timeout=timeout) as response:
+        with urllib.request.build_opener(_RejectRedirectHandler()).open(request, timeout=timeout) as response:
             return response.status
     except urllib.error.HTTPError as exc:
         return exc.code
