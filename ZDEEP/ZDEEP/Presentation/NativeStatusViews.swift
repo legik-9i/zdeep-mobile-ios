@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import ThinkingOrbsKit
 
 struct StartupLogoView: View {
     var body: some View {
@@ -22,8 +23,7 @@ struct NativeLoadingView: View {
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
-            ProgressView()
-                .tint(WelcomeStyle.text)
+            ThinkingOrb(state: .connecting, size: .px64, theme: .light)
                 .accessibilityHidden(true)
             Text("Загрузка")
                 .font(WelcomeStyle.font(.medium, size: 16, relativeTo: .body))
