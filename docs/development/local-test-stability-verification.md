@@ -75,3 +75,7 @@ Assertion упала: `session.requestedURL` было `http://localhost:4005`, �
 Это исправление также убирает прежнее замечание о сравнении origin с портами по умолчанию: сравнение origin больше не выполняется, поскольку разрешённых redirect нет.
 
 Перед слиянием полный local `all` запущен на commit `bff7add` после этого исправления: `Passed`, **257/257**, failures 0, skips 0, runtime warnings 0. Bundle: `.artifacts/runs/20261010-072644-1791606404095721000/Tests.xcresult` (iPhone 18 Pro Simulator, iOS 27.0).
+
+## Проверка после слияния
+
+После merge commit `bd7fe1d` в `main` полный local `all` повторно прошёл в основном checkout: `Passed`, **257/257**, failures 0, skips 0, runtime warnings 0. Bundle: `.artifacts/runs/20261010-073307-1791606787744883000/Tests.xcresult` (iPhone 18 Pro Simulator, iOS 27.0).
