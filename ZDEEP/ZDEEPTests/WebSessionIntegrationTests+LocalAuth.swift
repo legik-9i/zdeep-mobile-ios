@@ -7,6 +7,13 @@ import WebKit
 
 @MainActor
 extension WebSessionIntegrationTests {
+    private var localLaunchConfiguration: LaunchConfiguration {
+        LaunchConfiguration(
+            arguments: ["--environment", AppEnvironment.local.rawValue],
+            variables: ProcessInfo.processInfo.environment
+        )
+    }
+
     @Test func test_local_http_auth_failure_retry_and_invalid_response() async throws {
         let success = try LocalAuthFixture.successBody(carId: "local-http-car", serverTime: 1_000_000, exp: 1_900)
         let server = try LocalAuthHTTPFixture(responses: [
@@ -71,7 +78,7 @@ extension WebSessionIntegrationTests {
         }
 
         let store = BindingStore(recordStorage: keychain, markerStorage: marker)
-        let configuration = LaunchConfiguration(arguments: ["--environment", "local"], variables: [:])
+        let configuration = localLaunchConfiguration
         let clock = ContinuousSessionClock()
         let client = AuthClient(bindingStore: store, transport: URLSessionAuthHTTPTransport(), clock: clock,
                                 endpoints: configuration.endpoints(for: .local))
@@ -88,7 +95,7 @@ extension WebSessionIntegrationTests {
         coordinator.nativeFirstFrameDidRender(scenarioID: scenario)
 
         // Keep this fresh token in memory only; the QR uses the local agent URL shape.
-        let carToken = try await LocalAuthFixture.fetchFreshCarToken()
+        let carToken = try await LocalAuthFixture.fetchFreshCarToken(backend: configuration.endpoints(for: .local).backend)
         var qr = URLComponents(string: "http://localhost/auth/get-otp")!
         qr.queryItems = [URLQueryItem(name: "token", value: carToken)]
         await coordinator.scannerDidProduce(try #require(qr.url?.absoluteString))
@@ -115,7 +122,7 @@ extension WebSessionIntegrationTests {
         let rebindScenario = try #require(coordinator.activeScenarioID)
         coordinator.nativeFirstFrameDidRender(scenarioID: rebindScenario)
         // A rebind is a second independent registration, so request a second fresh local token.
-        let rebindCarToken = try await LocalAuthFixture.fetchFreshCarToken()
+        let rebindCarToken = try await LocalAuthFixture.fetchFreshCarToken(backend: configuration.endpoints(for: .local).backend)
         var rebindQR = URLComponents(string: "http://localhost/auth/get-otp")!
         rebindQR.queryItems = [URLQueryItem(name: "token", value: rebindCarToken)]
         await coordinator.scannerDidProduce(try #require(rebindQR.url?.absoluteString))
@@ -147,7 +154,8 @@ extension WebSessionIntegrationTests {
         let fixtureID = UUID().uuidString.lowercased()
         let storageKey = "__zdeep_ordinary_reset_\(fixtureID)"
         let cookieName = "zdeep_ordinary_reset_\(fixtureID)"
-        let url = AppEnvironment.local.endpoints.web
+        let configuration = localLaunchConfiguration
+        let url = configuration.endpoints(for: .local).web
         let seedSession = WebSession(trustedURL: url)
         defer { seedSession.close() }
         seedSession.load(url: url)
@@ -165,7 +173,6 @@ extension WebSessionIntegrationTests {
         let marker = FileInstallMarkerStorage(fileURL: markerRoot.appendingPathComponent("install.marker"))
         defer { try? keychain.delete(); try? marker.remove(); try? FileManager.default.removeItem(at: markerRoot) }
         let store = BindingStore(recordStorage: keychain, markerStorage: marker)
-        let configuration = LaunchConfiguration(arguments: ["--environment", "local"], variables: [:])
         let coordinator = AppCoordinator(configuration: configuration, bindingStore: store)
         await coordinator.start()
         await coordinator.resetBindingAndShowWelcome()
@@ -201,7 +208,8 @@ extension WebSessionIntegrationTests {
             try? FileManager.default.removeItem(at: markerRoot)
         }
 
-        let carToken = try await LocalAuthFixture.fetchFreshCarToken()
+        let configuration = localLaunchConfiguration
+        let carToken = try await LocalAuthFixture.fetchFreshCarToken(backend: configuration.endpoints(for: .local).backend)
         let store = BindingStore(recordStorage: keychain, markerStorage: marker)
         #expect(try await store.restore() == nil)
         let pending = try await store.beginRegistration()
@@ -212,7 +220,7 @@ extension WebSessionIntegrationTests {
             bindingStore: store,
             transport: transport,
             clock: clock,
-            endpoints: AppEnvironment.local.endpoints
+            endpoints: localLaunchConfiguration.endpoints(for: .local)
         )
 
         let serverTime: Double

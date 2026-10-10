@@ -6,9 +6,12 @@ import unittest
 from io import StringIO
 from pathlib import Path
 from unittest.mock import Mock
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zdeep_tools.diagnostics import DiagnosticError, DiagnosticManager, decode_response, load_javascript
+from zdeep import main
 
 
 class DiagnosticTests(unittest.TestCase):
@@ -95,6 +98,35 @@ class DiagnosticTests(unittest.TestCase):
         commands = [call.args[0] for call in runner.call_args_list]
         self.assertTrue(any("device-123" in command for command in commands))
         self.assertIn("device-123", commands[-1])
+
+    def test_device_install_keeps_project_signing(self):
+        runner = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+        root = Path(tempfile.mkdtemp())
+        manager = DiagnosticManager(root, runner=runner)
+        app = root / ".artifacts/device-derived/Build/Products/Debug-iphoneos/ZDEEP.app"
+        app.mkdir(parents=True)
+        manager.device_install("device-123")
+        build = next(call.args[0] for call in runner.call_args_list if "xcodebuild" in call.args[0])
+        self.assertIn("CODE_SIGNING_ALLOWED=YES", build)
+        self.assertNotIn("CODE_SIGN_IDENTITY=-", build)
+
+    def test_device_launch_keeps_test_environment_and_usb_opt_in(self):
+        runner = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
+        DiagnosticManager(Path(tempfile.mkdtemp()), runner=runner).device_launch("device-123", "test")
+        command = runner.call_args.args[0]
+        self.assertIn("--environment-variables", command)
+        environment = json.loads(command[command.index("--environment-variables") + 1])
+        self.assertEqual(environment, {"ZDEEP_ENVIRONMENT": "test", "ZDEEP_USB_DIAGNOSTICS": "1"})
+
+    def test_diagnostics_keep_device_testing_contract(self):
+        with patch("zdeep.preflight") as preflight, patch("zdeep.DiagnosticManager") as manager, redirect_stdout(StringIO()):
+            manager.return_value.diagnose.return_value = {"ok": True, "result": 2}
+            self.assertEqual(main(["device-launch", "--device", "DEVICE-1", "--environment", "test"]), 0)
+            self.assertEqual(main(["diagnose", "--target", "device", "--device", "DEVICE-1", "--environment", "test", "--js", "1+1"]), 0)
+        manager.return_value.device_launch.assert_called_once_with("DEVICE-1", "test")
+        manager.return_value.diagnose.assert_called_once()
+        self.assertEqual(manager.return_value.diagnose.call_args.kwargs["environment"], "test")
+        preflight.assert_not_called()
 
     def test_explicit_simulator_diagnostic_open_is_separate_from_normal_launch(self):
         runner = Mock(return_value=Mock(returncode=0, stdout="", stderr=""))
