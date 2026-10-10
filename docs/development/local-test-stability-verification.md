@@ -54,6 +54,16 @@ python3 scripts/zdeep.py test --environment local --suite integration --only 'We
 
 Assertion упала: `session.requestedURL` было `http://localhost:4005`, ожидаемый настроенный URL — `http://127.0.0.1:4005`. Bundle: `.artifacts/runs/20261010-061131-1791601891279429000/Tests.xcresult`.
 
-После исправления та же команда с теми же overrides завершилась успешно: 1/1 passed; preflight снова подтвердил HTTP 200. Bundle: `.artifacts/runs/20261010-061244-1791601964219274000/Tests.xcresult`. Временный `.local/development.json` удалён. Полный suite не перезапускался: финальные полные bundles относятся к предыдущему test commit `e8d7e3f`; этот единственный изменённый callsite проверен целевым integration selector.
+После исправления та же команда с теми же overrides завершилась успешно: 1/1 passed; preflight снова подтвердил HTTP 200. Bundle: `.artifacts/runs/20261010-061244-1791601964219274000/Tests.xcresult`. Временный `.local/development.json` удалён. На момент этой фокусной допроверки полный suite ещё не перезапускался; ниже зафиксированы последующие полные прогоны на финальном HEAD.
+
+## Финальный повтор на проверенном HEAD
+
+После уточнения требования о надёжности тестов полный набор повторно запущен на финальном commit `3ddaa9d` двумя последовательными прогонами. Первый собрал тестовые targets; второй использовал `--skip-build` и тот же `.xctestrun`.
+
+- Первый: `Passed`, **257/257**, failures 0, skips 0, runtime warnings 0. Bundle: `.artifacts/runs/20261010-064812-1791604092916377000/Tests.xcresult`.
+- Повтор `--skip-build`: `Passed`, **257/257**, failures 0, skips 0, runtime warnings 0. Bundle: `.artifacts/runs/20261010-065305-1791604385770534000/Tests.xcresult`.
+- `xcresulttool` подтвердил одинаковые счётчики, iPhone 18 Pro Simulator / iOS 27.0 и пустые `testFailures` в обоих bundles. Локальные API `/health` и Web прошли строгий preflight с HTTP 200.
+
+Таким образом, текущий проверенный HEAD прошёл полный набор два раза подряд на одной сборке без flake. Это даёт будущему агенту воспроизводимую базовую проверку; последующие изменения всё равно должны проходить тот же набор, чтобы сохранить результат.
 
 Финальный review также подтвердил отложенное не блокирующее замечание Minor P3 из Task 2: `scripts/zdeep_tools/preflight.py:17` сравнивает origin без нормализации явного default port (`http://host` и `http://host:80`). Его оставили вне этой узкой правки; reviewer отметил отсутствие внешнего запроса/влияния на безопасность.
