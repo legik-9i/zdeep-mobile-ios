@@ -36,7 +36,9 @@ final class AuthorizationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Загрузка"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["registration-count"].label, "pair 1 · complete 1")
         XCTAssertFalse(app.staticTexts["fixture.qr.car-token"].exists)
-        app.buttons["Отмена"].tap()
+        app.buttons["Отвязать автомобиль"].tap()
+        XCTAssertTrue(app.alerts.buttons["Отвязать автомобиль"].waitForExistence(timeout: 3))
+        app.alerts.buttons["Отвязать автомобиль"].tap()
 
         XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 1")
@@ -45,15 +47,15 @@ final class AuthorizationUITests: XCTestCase {
     @MainActor
     func test_rebindDeclineKeepsRegistrationAndConfirmResetsOnce() {
         let app = launchAuthorizationFixture("registered")
-        XCTAssertTrue(app.buttons["Перепривязать"].waitForExistence(timeout: 5))
-        app.buttons["Перепривязать"].tap()
+        XCTAssertTrue(app.buttons["Отвязать автомобиль"].waitForExistence(timeout: 5))
+        app.buttons["Отвязать автомобиль"].tap()
         XCTAssertTrue(app.alerts.buttons["Отмена"].waitForExistence(timeout: 3))
         app.alerts.buttons["Отмена"].tap()
         XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 0")
-        XCTAssertTrue(app.buttons["Перепривязать"].exists)
+        XCTAssertTrue(app.buttons["Отвязать автомобиль"].exists)
 
-        app.buttons["Перепривязать"].tap()
-        app.alerts.buttons["Перепривязать"].tap()
+        app.buttons["Отвязать автомобиль"].tap()
+        app.alerts.buttons["Отвязать автомобиль"].tap()
 
         XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 1")
@@ -63,9 +65,16 @@ final class AuthorizationUITests: XCTestCase {
     func test_coldRestoreLoadingCanCancelAndClearsStoredBinding() {
         let app = launchAuthorizationFixture("registered-loading")
         XCTAssertTrue(app.staticTexts["Загрузка"].waitForExistence(timeout: 5))
-        let cancel = app.buttons["Отмена"]
+        let cancel = app.buttons["Отвязать автомобиль"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 3))
         cancel.tap()
+        XCTAssertTrue(app.alerts.buttons["Отмена"].waitForExistence(timeout: 3))
+        app.alerts.buttons["Отмена"].tap()
+        XCTAssertTrue(app.staticTexts["Загрузка"].exists)
+        XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 0")
+
+        cancel.tap()
+        app.alerts.buttons["Отвязать автомобиль"].tap()
 
         XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 1")

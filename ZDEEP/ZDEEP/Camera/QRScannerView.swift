@@ -36,6 +36,7 @@ struct QRScannerView: View {
             .ignoresSafeArea(.container)
 
             scanGuidance
+                .ignoresSafeArea(.container)
                 .allowsHitTesting(false)
 
             Button("Закрыть") {

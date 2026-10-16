@@ -2,6 +2,27 @@ import XCTest
 
 final class DebugPanelUITests: XCTestCase {
     @MainActor
+    func test_dragOnlyMovesButtonAndTapOpensPanelAfterMoving() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--environment", "local", "--ui-test-empty-binding"]
+        app.launch()
+        let button = app.buttons["debug-button"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        let originalFrame = button.frame
+        let start = button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: -120, dy: 160)))
+
+        XCTAssertFalse(app.buttons["close-debug-panel"].exists)
+        XCTAssertGreaterThan(button.frame.midY, originalFrame.midY + 80)
+        button.tap()
+        XCTAssertTrue(app.buttons["close-debug-panel"].waitForExistence(timeout: 3))
+        app.buttons["close-debug-panel"].tap()
+        button.tap()
+        XCTAssertTrue(app.buttons["close-debug-panel"].waitForExistence(timeout: 3))
+    }
+
+    @MainActor
     func test_debug_panel_shows_preparedWebWithoutRevealingIt() {
         let app = XCUIApplication()
         app.launchArguments = ["--environment", "local", "--ui-test-empty-binding"]

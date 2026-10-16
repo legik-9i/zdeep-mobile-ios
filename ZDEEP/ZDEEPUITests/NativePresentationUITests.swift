@@ -13,7 +13,7 @@ final class NativePresentationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Сервер отклонил запрос (HTTP 503)."].exists)
         XCTAssertTrue(app.buttons["Начать сначала"].exists)
         XCTAssertFalse(app.buttons["Повторить"].exists)
-        XCTAssertFalse(app.buttons["Перепривязать"].exists)
+        XCTAssertFalse(app.buttons["Отвязать автомобиль"].exists)
     }
 
     @MainActor
@@ -24,7 +24,7 @@ final class NativePresentationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Доступ к автомобилю запрещён. CAR_ACCESS_DENIED"].exists)
         XCTAssertEqual(app.staticTexts["diagnostic-line"].label, "Код: NT · HTTP_403 · D8E15186")
         XCTAssertEqual(app.staticTexts["http-status"].label, "HTTP 403")
-        let rebind = app.buttons["Перепривязать"]
+        let rebind = app.buttons["Отвязать автомобиль"]
         XCTAssertTrue(rebind.exists)
         XCTAssertTrue(rebind.isHittable)
         rebind.tap()
@@ -32,7 +32,7 @@ final class NativePresentationUITests: XCTestCase {
         let confirmation = "Привязка на этом телефоне будет удалена. Для входа потребуется снова отсканировать QR-код машины"
         XCTAssertTrue(app.alerts.staticTexts[confirmation].waitForExistence(timeout: 3))
         XCTAssertTrue(app.alerts.buttons["Отмена"].exists)
-        XCTAssertTrue(app.alerts.buttons["Перепривязать"].exists)
+        XCTAssertTrue(app.alerts.buttons["Отвязать автомобиль"].exists)
     }
 
     @MainActor
