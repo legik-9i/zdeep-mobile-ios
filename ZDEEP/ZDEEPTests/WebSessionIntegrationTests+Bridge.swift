@@ -126,6 +126,8 @@ extension WebSessionIntegrationTests {
         #expect((eventCountAfterStaleDelivery as? NSNumber)?.intValue == 1)
     }
 
+    // Vite HMR может прервать загрузку с pageChanged: допустим повтор этого теста;
+    // если повтор проходит, считаем проверку успешной.
     @Test func test_public_reload_reinjects_bridge_for_a_new_document() async throws {
         let manager = BridgeTestSessionManager()
         manager.currentSession = BridgeTestSessionManager.fixtureSession
