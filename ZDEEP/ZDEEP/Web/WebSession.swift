@@ -24,6 +24,11 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     private var navigationCallbacks = NavigationCallbackGate<ObjectIdentifier>()
     private var pendingUserNavigationURL: URL?
     private var trustedURL: URL?
+    private var launchBaseURL: URL?
+    private var launchAppVersion: String?
+    private var launchTheme = "light"
+    private var nativeLaunchURL: URL?
+    private var currentRequestIsNativeLaunch = false
     private var documentContext: WebDocumentContext?
     private var bridge: (any WebDocumentBridgeHandling)?
     private let openExternalURL: (URL) -> Void
@@ -111,16 +116,37 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
 
     func load(url: URL) {
         guard !isClosed else { return }
-        if documentContext?.phase != .preparing || requestedURL != url {
-            prepare(url: url, reason: currentDocument == nil ? .initial : .explicitRetry)
+        let isInitialLaunch = requestedURL == nil && currentDocument == nil
+        let (targetURL, isNativeLaunch) = launchURL(for: url, isNativeLaunch: isInitialLaunch)
+        if documentContext?.phase != .preparing || requestedURL != targetURL {
+            prepare(url: targetURL, reason: currentDocument == nil ? .initial : .explicitRetry, isNativeLaunch: isNativeLaunch)
+            startLoad(url: targetURL)
+        } else {
+            startLoad(url: targetURL)
         }
-        startLoad(url: url)
     }
 
     func prepareAndLoad(url: URL, reason: WebPreparationReason) {
         guard !isClosed else { return }
-        prepare(url: url, reason: reason)
-        startLoad(url: url)
+        let shouldUseLaunchMetadata: Bool
+        if reason == .explicitRetry {
+            shouldUseLaunchMetadata = url == launchBaseURL || url == nativeLaunchURL
+        } else {
+            shouldUseLaunchMetadata = reason == .processRecovery && currentRequestIsNativeLaunch && url == nativeLaunchURL
+        }
+        let (targetURL, isNativeLaunch) = launchURL(for: url, isNativeLaunch: shouldUseLaunchMetadata)
+        prepare(url: targetURL, reason: reason, isNativeLaunch: isNativeLaunch)
+        startLoad(url: targetURL)
+    }
+
+    func configureLaunchURL(baseURL: URL, appVersion: String, theme: String) {
+        launchBaseURL = baseURL
+        launchAppVersion = appVersion
+        launchTheme = theme
+    }
+
+    func updateLaunchTheme(_ theme: String) {
+        launchTheme = theme
     }
 
     func invalidateCurrentDocument() {
@@ -136,7 +162,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         prepareAndLoad(url: url, reason: .processRecovery)
     }
 
-    func prepare(url: URL, reason: WebPreparationReason) {
+    func prepare(url: URL, reason: WebPreparationReason, isNativeLaunch: Bool = false) {
         guard !isClosed else { return }
         trustedURL = trustedURL ?? url
         let origin = trustedURL ?? url
@@ -148,6 +174,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         if let previous, previous != identity { bridge?.closeDocument(previous) }
         currentDocument = identity
         requestedURL = url
+        currentRequestIsNativeLaunch = isNativeLaunch
         redirectChain = [url]
         responseStatusCode = nil
         currentURL = url
@@ -179,6 +206,10 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
     func reload() {
         guard !isClosed, requestedURL != nil else { return }
         guard let url = requestedURL else { return }
+        if currentRequestIsNativeLaunch {
+            prepareAndLoad(url: url, reason: .explicitRetry)
+            return
+        }
         prepare(url: url, reason: .explicitRetry)
         pendingUserNavigationURL = nil
         navigationCallbacks.clear()
@@ -190,6 +221,19 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         let navigationId = ObjectIdentifier(navigation)
         navigationCallbacks.replace(with: navigationId)
         if let currentDocument { documentContext?.bindNavigation(navigationId, to: currentDocument) }
+    }
+
+    private func launchURL(for url: URL, isNativeLaunch: Bool) -> (URL, Bool) {
+        guard isNativeLaunch, let launchBaseURL, let launchAppVersion,
+              url == launchBaseURL || url == nativeLaunchURL else { return (url, false) }
+        let targetURL = WebLaunchURL.make(
+            baseURL: launchBaseURL,
+            appVersion: launchAppVersion,
+            bridgeVersion: NativeBridge.version,
+            theme: launchTheme
+        )
+        nativeLaunchURL = targetURL
+        return (targetURL, true)
     }
 
 #if DEBUG
@@ -281,6 +325,7 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
             adopted = true
             let navigationURL = self.pendingUserNavigationURL ?? requestedURL
             self.requestedURL = navigationURL
+            self.currentRequestIsNativeLaunch = false
             self.currentURL = navigationURL
             self.redirectChain = navigationURL.map { [$0] } ?? []
             self.responseStatusCode = nil

@@ -24,7 +24,7 @@ final class AuthorizationUITests: XCTestCase {
     }
 
     @MainActor
-    func test_syntheticQrStartsSingleRegistrationAndCancelReturnsToWelcome() {
+    func test_syntheticQrStartsSingleRegistrationWithoutLoadingUnlinkAction() {
         let app = launchAuthorizationFixture("authorized")
         let scan = app.buttons["Сканировать QR-код"]
         XCTAssertTrue(scan.waitForExistence(timeout: 5), "Сценарий authorized должен открывать приветствие")
@@ -36,12 +36,8 @@ final class AuthorizationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Загрузка"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["registration-count"].label, "pair 1 · complete 1")
         XCTAssertFalse(app.staticTexts["fixture.qr.car-token"].exists)
-        app.buttons["Отвязать автомобиль"].tap()
-        XCTAssertTrue(app.alerts.buttons["Отвязать автомобиль"].waitForExistence(timeout: 3))
-        app.alerts.buttons["Отвязать автомобиль"].tap()
-
-        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 1")
+        XCTAssertFalse(app.buttons["Отвязать автомобиль"].exists)
+        XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 0")
     }
 
     @MainActor
@@ -62,22 +58,11 @@ final class AuthorizationUITests: XCTestCase {
     }
 
     @MainActor
-    func test_coldRestoreLoadingCanCancelAndClearsStoredBinding() {
+    func test_coldRestoreLoadingHasNoUnlinkAction() {
         let app = launchAuthorizationFixture("registered-loading")
         XCTAssertTrue(app.staticTexts["Загрузка"].waitForExistence(timeout: 5))
-        let cancel = app.buttons["Отвязать автомобиль"]
-        XCTAssertTrue(cancel.waitForExistence(timeout: 3))
-        cancel.tap()
-        XCTAssertTrue(app.alerts.buttons["Отмена"].waitForExistence(timeout: 3))
-        app.alerts.buttons["Отмена"].tap()
-        XCTAssertTrue(app.staticTexts["Загрузка"].exists)
+        XCTAssertFalse(app.buttons["Отвязать автомобиль"].exists)
         XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 0")
-
-        cancel.tap()
-        app.alerts.buttons["Отвязать автомобиль"].tap()
-
-        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["reset-count"].label, "reset 1")
     }
 
     @MainActor

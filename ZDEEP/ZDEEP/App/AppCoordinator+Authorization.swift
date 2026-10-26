@@ -12,7 +12,7 @@ extension AppCoordinator {
         didConsumeCameraResult = false
         cameraPermissionRecheckPending = false
         didReceiveFirstFrame = false
-        canCancelAuthorization = false
+        clearWebLoading()
         closeCurrentWebSession()
         screen = .loading
 
@@ -49,7 +49,7 @@ extension AppCoordinator {
         cameraScanIntentID = nil
         cameraPermissionRecheckPending = false
         didConsumeCameraResult = false
-        canCancelAuthorization = false
+        clearWebLoading()
         activeScenarioID = UUID()
         didReceiveFirstFrame = false
         closeCurrentWebSession()
@@ -63,8 +63,8 @@ extension AppCoordinator {
         cameraScanIntentID = nil
         do {
             let qr = try CarQRParser.parse(value)
+            beginWebLoading()
             screen = .loading
-            canCancelAuthorization = true
             await registerFromQR(qr, scenarioID: intent)
         } catch {
             let failure = AuthFailure(
@@ -79,11 +79,6 @@ extension AppCoordinator {
     func scannerDidFail() {
         guard screen == .scanner, cameraScanIntentID == activeScenarioID else { return }
         cancelCameraScan()
-    }
-
-    func cancelAuthorization() async {
-        guard canCancelAuthorization, !isTransitioning else { return }
-        await performBindingCleanup(reason: .cancel, next: .restoreThenWelcome)
     }
 
     private func showCameraState(for status: AVAuthorizationStatus) {
@@ -104,7 +99,6 @@ extension AppCoordinator {
             _ = try await sessionManager.register(binding: pending, carToken: carToken)
             guard activeScenarioID == scenarioID else { return }
             restoredBinding = sessionManager.registeredBinding
-            canCancelAuthorization = true
             screen = .loading
             if didReceiveFirstFrame { prepareWebSession() }
         } catch is CancellationError {
@@ -117,7 +111,6 @@ extension AppCoordinator {
             guard activeScenarioID == scenarioID else { return }
             if let binding = registrationFailure.registeredBinding {
                 restoredBinding = binding
-                canCancelAuthorization = false
                 activeScenarioID = UUID()
                 screen = .error(.retryable(registrationFailure.failure, context: .authorization(binding)))
             } else {
@@ -132,7 +125,6 @@ extension AppCoordinator {
     private func cleanFailedRegistration(_ failure: AuthFailure, scenarioID: UUID) async {
         guard activeScenarioID == scenarioID else { return }
         cameraScanIntentID = nil
-        canCancelAuthorization = false
         await performBindingCleanup(reason: .failedRegistration, next: .showRegistrationError(failure))
     }
 }

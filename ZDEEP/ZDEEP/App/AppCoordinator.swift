@@ -47,9 +47,10 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var isWebPrepared = false
     @Published var screen: AppScreen = .logo
     @Published var isTransitioning = false
-    @Published var canCancelAuthorization = false
+    @Published private(set) var webLoadingImageName: String?
     @Published private(set) var activeWebSession: WebSession?
     @Published private(set) var sessionStateRevision = 0
+    private var launchTheme = "light"
 
     let configuration: LaunchConfiguration
     private let sessionFactory: any WebSessionFactory
@@ -103,6 +104,19 @@ final class AppCoordinator: ObservableObject {
 
     func setWebViewOpen(_ open: Bool) {
         isWebViewOpen = open
+    }
+
+    func beginWebLoading() {
+        webLoadingImageName = String(format: "LoadingScene%02d", Int.random(in: 1...8))
+    }
+
+    func clearWebLoading() {
+        webLoadingImageName = nil
+    }
+
+    func setLaunchTheme(_ theme: ColorScheme) {
+        launchTheme = theme == .dark ? "dark" : "light"
+        activeWebSession?.updateLaunchTheme(launchTheme)
     }
 
     var canSwitchEnvironment: Bool {
@@ -184,11 +198,10 @@ final class AppCoordinator: ObservableObject {
         let scenario = UUID()
         activeScenarioID = scenario
         if let binding = restoredBinding {
-            canCancelAuthorization = true
+            beginWebLoading()
             screen = .loading
             Task { @MainActor [weak self] in await self?.refresh(binding) }
         } else {
-            canCancelAuthorization = false
             screen = .welcome
         }
         await Task.yield()
@@ -198,7 +211,7 @@ final class AppCoordinator: ObservableObject {
         closeCurrentWebSession()
         cameraScanIntentID = nil
         didConsumeCameraResult = false
-        canCancelAuthorization = false
+        clearWebLoading()
         restoredBinding = nil
         didReceiveFirstFrame = false
         activeScenarioID = UUID()
@@ -241,7 +254,6 @@ final class AppCoordinator: ObservableObject {
             screen = .logo
             await startNewRestoreScenario()
         case .authorization(let binding):
-            canCancelAuthorization = true
             screen = .loading
             await retryAuthorization(binding)
         case .web(let url, _, _):
@@ -281,6 +293,7 @@ final class AppCoordinator: ObservableObject {
         } catch {
             guard activeScenarioID == scenarioID else { return }
             let failure = sessionManager.lastError ?? Self.restoreFailure(error)
+            clearWebLoading()
             screen = .error(.retryable(failure, context: .authorization(binding)))
         }
     }
@@ -295,15 +308,15 @@ final class AppCoordinator: ObservableObject {
             restoredBinding = binding
             if let binding {
                 if restoreAfterCleanup != nil, let failure = restoreAfterCleanupFailure {
-                    canCancelAuthorization = false
+                    clearWebLoading()
                     screen = .error(.retryable(failure, context: .restore))
                 } else {
-                    canCancelAuthorization = true
+                    beginWebLoading()
                     screen = .loading
                     await refresh(binding)
                 }
             } else {
-                canCancelAuthorization = false
+                clearWebLoading()
                 if case .showRegistrationError(let failure) = restoreAfterCleanup {
                     restoreAfterCleanup = nil
                     restoreAfterCleanupFailure = nil
@@ -316,8 +329,8 @@ final class AppCoordinator: ObservableObject {
             }
         } catch {
             guard activeScenarioID == scenarioID else { return }
-            canCancelAuthorization = false
             let failure = Self.restoreFailure(error)
+            clearWebLoading()
             if restoreAfterCleanup != nil { restoreAfterCleanupFailure = failure }
             screen = .error(.retryable(failure, context: .restore))
         }
@@ -342,8 +355,19 @@ final class AppCoordinator: ObservableObject {
         }
         guard let activeWebSession = session as? WebSession else { return }
         self.activeWebSession = activeWebSession
+        activeWebSession.configureLaunchURL(
+            baseURL: endpoints.web,
+            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "",
+            theme: launchTheme
+        )
         activeWebSession.onEvent = { [weak self] event in self?.webSessionDidEmit(event, scenarioID: scenario) }
-        let bridge = NativeBridge(session: activeWebSession, manager: sessionManager) { [weak self] identity, readyScreen in
+        let bridge = NativeBridge(
+            session: activeWebSession,
+            manager: sessionManager,
+            onUnlinkCar: { [weak self] in
+                Task { @MainActor [weak self] in await self?.resetBindingAndShowWelcome() }
+            }
+        ) { [weak self] identity, readyScreen in
             guard let self,
                   activeWebSession.currentDocument == identity,
                   activeWebSession.isCurrentDocumentCommitted else {
@@ -389,6 +413,7 @@ final class AppCoordinator: ObservableObject {
             guard let failure, restoredBinding != nil else { return }
             if case .error(.retryable(_, context: .web)) = screen { return }
             guard !isWebViewOpen else { return }
+            clearWebLoading()
             screen = .error(.retryable(failure, context: .authorization(restoredBinding!)))
         case .entryFailed, .authorizationActivityChanged:
             break
@@ -430,7 +455,6 @@ final class AppCoordinator: ObservableObject {
         await beginNewScenarioAndStopSession()
         await closeForOwnedCleanup()
         screen = .logo
-        canCancelAuthorization = false
 
         let progress = await ownedClientDataCleaner.clean(remaining: remaining)
         guard progress.remaining.isEmpty else {
@@ -467,9 +491,9 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func beginNewScenarioAndStopSession() async {
+        clearWebLoading()
         cameraScanIntentID = nil
         didConsumeCameraResult = false
-        canCancelAuthorization = false
         activeScenarioID = UUID()
         didReceiveFirstFrame = false
         restoredBinding = nil

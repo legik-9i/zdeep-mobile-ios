@@ -16,7 +16,7 @@ extension AppCoordinator {
         defer { isTransitioning = false }
         cameraScanIntentID = nil
         didConsumeCameraResult = false
-        canCancelAuthorization = false
+        clearWebLoading()
         activeScenarioID = UUID()
         didReceiveFirstFrame = false
         closeCurrentWebSession()

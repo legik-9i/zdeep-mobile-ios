@@ -21,8 +21,12 @@ extension AppCoordinator {
             if !continuePendingBudget { readinessRemaining = .seconds(60) }
             setWebViewOpen(false)
             if reason == .fullNavigation || reason == .explicitRetry || reason == .processRecovery {
+                if reason == .processRecovery || didRevealWebSession {
+                    clearWebLoading()
+                } else if webLoadingImageName == nil {
+                    beginWebLoading()
+                }
                 screen = .loading
-                canCancelAuthorization = true
             }
             if let binding = restoredBinding, sessionManager.currentSession?.carId == binding.carId {
                 if readinessRemaining == .zero {
@@ -50,7 +54,7 @@ extension AppCoordinator {
             cancelReadinessBudget(reset: true)
             guard let binding = restoredBinding else { return }
             setWebViewOpen(false)
-            canCancelAuthorization = false
+            clearWebLoading()
             screen = .error(.retryable(failure, context: .web(
                 url: readinessURL ?? endpoints.web, bindingId: binding.bindingId, reason: readinessReason
             )))
@@ -61,15 +65,15 @@ extension AppCoordinator {
             setWebViewOpen(false)
             guard didRevealWebSession, !didRecoverProcess, let webSession else {
                 readinessIdentity = nil
-                canCancelAuthorization = false
+                clearWebLoading()
                 screen = .error(.retryable(Self.webRecoveryFailure(), context: .web(
                     url: readinessURL ?? endpoints.web, bindingId: binding.bindingId, reason: .processRecovery
                 )))
                 return
             }
             didRecoverProcess = true
+            clearWebLoading()
             screen = .loading
-            canCancelAuthorization = true
             webSession.recoverFromProcessTermination()
         }
     }
@@ -101,7 +105,7 @@ extension AppCoordinator {
         guard restoredBinding?.bindingId == binding.bindingId,
               let scenarioID = activeScenarioID else { return }
         let webSession = self.webSession
-        canCancelAuthorization = true
+        beginWebLoading()
         screen = .loading
         setWebViewOpen(false)
         invalidateCurrentReadiness()
@@ -114,7 +118,7 @@ extension AppCoordinator {
             readinessSessionDidChange()
         } catch {
             guard activeScenarioID == scenarioID else { return }
-            canCancelAuthorization = false
+            clearWebLoading()
             screen = .error(.retryable(sessionManager.lastError ?? Self.restoreFailure(error), context: .authorization(binding)))
         }
     }
@@ -123,16 +127,16 @@ extension AppCoordinator {
         guard let binding = restoredBinding,
               let webSession,
               let scenarioID = activeScenarioID else { return }
-        canCancelAuthorization = true
-        screen = .loading
-        setWebViewOpen(false)
-        invalidateCurrentReadiness()
-        webSession.invalidateCurrentDocument()
         if sessionManager.currentSession?.carId != binding.carId {
             await retryAuthorization(binding, webURL: url)
             return
         }
         guard activeScenarioID == scenarioID else { return }
+        beginWebLoading()
+        screen = .loading
+        setWebViewOpen(false)
+        invalidateCurrentReadiness()
+        webSession.invalidateCurrentDocument()
         readinessRemaining = .seconds(60)
         webSession.prepareAndLoad(url: url, reason: .explicitRetry)
     }
@@ -202,7 +206,7 @@ extension AppCoordinator {
               let binding = restoredBinding else { return }
         cancelReadinessBudget(reset: false)
         readinessRemaining = .zero
-        canCancelAuthorization = false
+        clearWebLoading()
         let failure = AuthFailure(kind: .timeout, stage: .web, attemptId: UUID(),
             message: "Web session did not become ready", diagnosticCode: "WEB_READY_TIMEOUT")
         screen = .error(.retryable(failure, context: .web(
@@ -235,7 +239,7 @@ extension AppCoordinator {
         readinessRemaining = .zero
         readinessIdentity = nil
         currentCommittedDocument = nil
-        canCancelAuthorization = false
+        clearWebLoading()
         setWebViewOpen(false)
         let failure = AuthFailure(kind: .timeout, stage: .web, attemptId: identity.attemptId,
             message: "Web session did not become ready", diagnosticCode: "WEB_READY_TIMEOUT")
@@ -263,7 +267,6 @@ extension AppCoordinator {
               screen == .loading || screen == .web else { return }
         setWebViewOpen(true)
         screen = .web
-        canCancelAuthorization = false
         if !didRevealWebSession {
             didRevealWebSession = true
             sessionManager.webViewDidBecomeVisible()

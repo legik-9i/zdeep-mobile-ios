@@ -6,6 +6,59 @@ import WebKit
 
 @MainActor
 extension WebSessionIntegrationTests {
+    @Test func test_reopen_reload_and_recovery_preserve_launch_provenance_after_user_navigation() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let launchURL = try await fixtureServer.start()
+        let session = WebSession(trustedURL: launchURL)
+        session.configureLaunchURL(baseURL: launchURL, appVersion: "1.0", theme: "light")
+        defer { session.close() }
+
+        session.load(url: launchURL)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        let initialRequestedURL = try #require(session.requestedURL)
+        let launchItems = try #require(URLComponents(url: initialRequestedURL, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(launchItems.contains(URLQueryItem(name: "platform", value: "ios")))
+        let firstDocument = try #require(session.currentDocument)
+
+        session.updateLaunchTheme("dark")
+        #expect(session.currentDocument == firstDocument)
+        #expect(session.requestedURL == initialRequestedURL)
+
+        session.prepareAndLoad(url: initialRequestedURL, reason: .explicitRetry)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        let darkLaunchURL = try #require(session.requestedURL)
+        let darkLaunchItems = URLComponents(url: darkLaunchURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(darkLaunchItems.contains(URLQueryItem(name: "theme", value: "dark")))
+
+        _ = try await session.executeJavaScript("window.location.href = '\(launchURL.absoluteString)'; true", timeout: .seconds(5))
+        _ = try await session.waitForJavaScript("location.search", equals: .string(""), timeout: .seconds(5))
+        #expect(session.requestedURL == launchURL)
+
+        session.reload()
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        let reloadedURL = try #require(session.requestedURL)
+        let reloadedItems = URLComponents(url: reloadedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(reloadedURL == launchURL)
+        #expect(reloadedItems.allSatisfy { !WebLaunchURL.parameterNames.contains($0.name) })
+        #expect(try await session.executeJavaScript("location.search", timeout: .seconds(5)) == .string(""))
+
+        session.recoverFromProcessTermination()
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        let recoveredURL = try #require(session.requestedURL)
+        let recoveredItems = URLComponents(url: recoveredURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(recoveredURL == launchURL)
+        #expect(recoveredItems.allSatisfy { !WebLaunchURL.parameterNames.contains($0.name) })
+
+        session.prepareAndLoad(url: launchURL, reason: .explicitRetry)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        let reopenedURL = try #require(session.requestedURL)
+        let reopenedItems = URLComponents(url: reopenedURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        #expect(reopenedItems.contains(URLQueryItem(name: "platform", value: "ios")))
+        #expect(reopenedItems.contains(URLQueryItem(name: "nativeAppVersion", value: "1.0")))
+        #expect(reopenedItems.contains(URLQueryItem(name: "bridgeVersion", value: NativeBridge.version)))
+        #expect(reopenedItems.contains(URLQueryItem(name: "theme", value: "dark")))
+    }
+
     @Test func test_bridge_fixture_exposes_all_methods_at_document_start() async throws {
         let fixtureServer = try BridgeFixtureServer()
         let url = try await fixtureServer.start()
@@ -124,6 +177,135 @@ extension WebSessionIntegrationTests {
             in: nil, contentWorld: .page
         )
         #expect((eventCountAfterStaleDelivery as? NSNumber)?.intValue == 1)
+    }
+
+    @Test func test_unlink_car_is_void_idempotent_and_rejects_stale_and_child_documents() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        var unlinkCalls = 0
+        let manager = BridgeTestSessionManager()
+        let session = WebSession(trustedURL: url)
+        _ = NativeBridge(session: session, manager: manager, onUnlinkCar: { unlinkCalls += 1 }) { _, _ in }
+        defer { session.close() }
+        session.load(url: url)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+
+        let returnTypes = try await session.executeJavaScript(
+            "[typeof window.ZdeepNative.unlinkCar(), typeof window.ZdeepNative.unlinkCar()]", timeout: .seconds(5)
+        )
+        #expect(returnTypes == .array([.string("undefined"), .string("undefined")]))
+        for _ in 0..<50 where unlinkCalls == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(unlinkCalls == 1)
+
+        let oldDocumentId = try #require(session.currentDocument?.documentId.uuidString)
+        session.reload()
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        let staleReply = try await session.executeJavaScript(
+            "window.webkit.messageHandlers.zdeepNative.postMessage({documentId:'\(oldDocumentId)',method:'unlinkCar',params:null}).then(reply => reply.error.code)",
+            timeout: .seconds(5)
+        )
+        #expect(staleReply == .string("BRIDGE_INVALID_REQUEST"))
+
+        let currentDocumentId = try #require(session.currentDocument?.documentId.uuidString)
+        let childReply = try await session.executeJavaScript(
+            "document.querySelector('#same-origin-frame').contentWindow.webkit.messageHandlers.zdeepNative.postMessage({documentId:'\(currentDocumentId)',method:'unlinkCar',params:null}).then(reply => reply.error.code)",
+            timeout: .seconds(5)
+        )
+        #expect(childReply == .string("BRIDGE_INVALID_REQUEST"))
+        #expect(unlinkCalls == 1)
+    }
+
+    @Test func test_unlink_car_rejects_foreign_main_frame_with_current_document_id() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let trustedURL = try await fixtureServer.start()
+        let foreignServer = try BridgeFixtureServer(html: "<!doctype html><html><body>foreign</body></html>")
+        let foreignURL = try await foreignServer.start()
+        var foreignComponents = try #require(URLComponents(url: foreignURL, resolvingAgainstBaseURL: false))
+        foreignComponents.host = "127.0.0.1"
+        let foreignOriginURL = try #require(foreignComponents.url)
+        var unlinkCalls = 0
+        let session = WebSession(trustedURL: trustedURL)
+        _ = NativeBridge(session: session, manager: BridgeTestSessionManager(), onUnlinkCar: { unlinkCalls += 1 }) { _, _ in }
+        defer { session.close() }
+        session.load(url: trustedURL)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+        let currentDocumentId = try #require(session.currentDocument?.documentId.uuidString)
+
+        // Share the handler while loading this second main frame from a different origin.
+        let foreignConfiguration = WKWebViewConfiguration()
+        foreignConfiguration.userContentController = session.webView.configuration.userContentController
+        let foreignWebView = WKWebView(frame: .zero, configuration: foreignConfiguration)
+        defer { foreignWebView.stopLoading() }
+        foreignWebView.load(URLRequest(url: foreignOriginURL))
+        var foreignReady = false
+        for _ in 0..<100 where !foreignReady {
+            foreignReady = (try? await foreignWebView.evaluateJavaScript("document.readyState") as? String) == "complete"
+            if !foreignReady { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        #expect(foreignReady)
+
+        let rejectedCode = try await foreignWebView.callAsyncJavaScript(
+            "const reply = await window.webkit.messageHandlers.zdeepNative.postMessage({documentId, method:'unlinkCar', params:null}); return window.top === window ? reply.error?.code : 'not-main-frame'",
+            arguments: ["documentId": currentDocumentId], in: nil, contentWorld: .page
+        ) as? String
+        #expect(rejectedCode == "BRIDGE_INVALID_REQUEST")
+        #expect(unlinkCalls == 0)
+    }
+
+    @Test func test_coordinator_unlink_resets_binding_after_closing_webview() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "fixture-car")
+        let store = UnlinkResettableBindingStore(binding: binding)
+        let manager = BridgeTestSessionManager()
+        manager.updateResult = BridgeTestSessionManager.fixtureSession
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(
+                arguments: ["--environment", "local", "--web-url", url.absoluteString], variables: [:]
+            ),
+            bindingStore: store, sessionManager: manager
+        )
+        await coordinator.start()
+        coordinator.nativeFirstFrameDidRender(scenarioID: try #require(coordinator.activeScenarioID))
+        let session = try #require(coordinator.activeWebSession)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+
+        #expect(try await session.executeJavaScript(
+            "setTimeout(() => window.ZdeepNative.unlinkCar(), 100); true", timeout: .seconds(5)
+        ) == .bool(true))
+        for _ in 0..<100 where store.restoreCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(session.isClosed)
+        #expect(store.resetCount == 1)
+        #expect(try await store.restore() == nil)
+        #expect(manager.stopCount == 1)
+        #expect(coordinator.screen == .welcome)
+    }
+
+    @Test func test_unlink_car_ignores_rejected_transport_promise() async throws {
+        let fixtureServer = try BridgeFixtureServer()
+        let url = try await fixtureServer.start()
+        let session = WebSession(trustedURL: url)
+        _ = NativeBridge(session: session, manager: BridgeTestSessionManager()) { _, _ in }
+        defer { session.close() }
+        session.load(url: url)
+        _ = try await session.waitForJavaScript("document.readyState", equals: .string("complete"), timeout: .seconds(5))
+
+        let result = try await session.executeJavaScript(
+            """
+            (async () => {
+                window.__unlinkUnhandled = 0;
+                window.addEventListener('unhandledrejection', () => window.__unlinkUnhandled++);
+                const handler = window.webkit.messageHandlers.zdeepNative;
+                Object.defineProperty(handler, 'postMessage', { configurable: true, value: () => Promise.reject(new Error('transport')) });
+                const returnType = typeof window.ZdeepNative.unlinkCar();
+                await new Promise(resolve => setTimeout(resolve, 0));
+                return [returnType, window.__unlinkUnhandled];
+            })()
+            """,
+            timeout: .seconds(5)
+        )
+        #expect(result == .array([.string("undefined"), .number(0)]))
     }
 
     // Vite HMR может прервать загрузку с pageChanged: допустим повтор этого теста;
@@ -500,6 +682,7 @@ final class BridgeTestSessionManager: SessionManaging {
     var updateFailure: AuthFailure?
     var updateResult: AuthSession?
     private(set) var updateCalls = 0
+    private(set) var stopCount = 0
     var lastError: AuthFailure?
     var registeredBinding: RegisteredBinding?
     var isAuthorizationInFlight = false
@@ -520,7 +703,7 @@ final class BridgeTestSessionManager: SessionManaging {
     }
     func webViewDidBecomeVisible() {}
     func setActive(_ active: Bool) {}
-    func stop() {}
+    func stop() { stopCount += 1 }
     func emit(_ event: SessionManagerEvent) { for callback in callbacks.values { callback(event) } }
 
     static func failure(code: String) -> AuthFailure {
@@ -538,6 +721,20 @@ private final class BridgeTestCancellation: CancellationHandle {
 }
 
 private enum BridgeTestReadyRejection: Error { case rejected }
+
+private final class UnlinkResettableBindingStore: BindingStoring, @unchecked Sendable {
+    private var binding: RegisteredBinding?
+    private(set) var resetCount = 0
+    private(set) var restoreCount = 0
+
+    init(binding: RegisteredBinding? = nil) { self.binding = binding }
+
+    func restore() async throws -> RegisteredBinding? { restoreCount += 1; return binding }
+    func beginRegistration() async throws -> PendingBinding { throw BindingStoreError.registrationNotAllowed }
+    func sign(bindingId: UUID, bytes: Data) async throws -> Data { throw BindingStoreError.registrationNotAllowed }
+    func completeRegistration(bindingId: UUID, carId: String) async throws -> RegisteredBinding { throw BindingStoreError.registrationNotAllowed }
+    func reset() async throws { resetCount += 1; binding = nil }
+}
 
 private final class BridgeFixtureServer {
     private let listener = try! NWListener(using: .tcp, on: .any)

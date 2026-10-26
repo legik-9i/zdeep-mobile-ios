@@ -8,6 +8,76 @@ import Testing
 struct CoordinatorTests {
     private static let qrURL = "https://example.invalid/auth/get-otp?token=header.eyJjYXJJZCI6InN5bnRoZXRpYy1jYXIifQ.signature"
 
+    @Test func test_web_loading_image_is_stable_while_waiting_across_background() async {
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "synthetic", carId: "synthetic-car")
+        let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: false)
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let gate = TestSaveGate()
+        manager.updateGate = gate
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store, sessionManager: manager
+        )
+
+        await coordinator.start()
+        await gate.waitUntilStarted()
+        let imageName = coordinator.webLoadingImageName
+        #expect((1...8).contains { imageName == String(format: "LoadingScene%02d", $0) })
+
+        coordinator.setActive(false)
+        coordinator.setActive(true)
+        #expect(coordinator.webLoadingImageName == imageName)
+        gate.resume()
+    }
+
+    @Test func test_qr_registration_wait_has_illustration_before_binding_is_saved() async {
+        let store = RegistrationCoordinatorBindingStore()
+        let gate = TestSaveGate()
+        store.beginGate = gate
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store,
+            sessionManager: FakeRegistrationSessionManager(bindingStore: store),
+            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
+        )
+        await coordinator.start()
+        await coordinator.beginCameraScan()
+        let registration = Task { await coordinator.scannerDidProduce(Self.qrURL) }
+        await gate.waitUntilStarted()
+
+        #expect(coordinator.restoredBinding == nil)
+        let imageName = coordinator.webLoadingImageName
+        #expect((1...8).contains { imageName == String(format: "LoadingScene%02d", $0) })
+        coordinator.setActive(false)
+        coordinator.setActive(true)
+        #expect(coordinator.webLoadingImageName == imageName)
+
+        gate.resume()
+        await registration.value
+    }
+
+    @Test func test_cleanup_loading_does_not_keep_web_illustration() async {
+        let store = RegistrationCoordinatorBindingStore()
+        let gate = TestSaveGate()
+        store.resetGate = gate
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            bindingStore: store,
+            sessionManager: FakeRegistrationSessionManager(bindingStore: store)
+        )
+        coordinator.beginWebLoading()
+
+        let cleanup = Task {
+            await coordinator.performBindingCleanup(reason: .rebind, next: .restoreThenWelcome)
+        }
+        await gate.waitUntilStarted()
+        #expect(coordinator.screen == .loading)
+        #expect(coordinator.webLoadingImageName == nil)
+
+        gate.resume()
+        await cleanup.value
+    }
+
     @Test func test_camera_permission_is_requested_before_scanner() async {
         let permission = FakeCameraPermissionProvider(status: .notDetermined, requestResult: true)
         let coordinator = AppCoordinator(
@@ -21,65 +91,7 @@ struct CoordinatorTests {
 
         #expect(permission.calls == ["status", "request"])
         #expect(coordinator.screen == .scanner)
-    }
-
-    @Test func test_cancel_cold_restore_token_attempt_before_and_after_retry() async {
-        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "synthetic", carId: "synthetic-car")
-        let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: false)
-        let manager = FakeRegistrationSessionManager(bindingStore: store)
-        let updateGate = TestSaveGate()
-        manager.updateGate = updateGate
-        let coordinator = AppCoordinator(
-            configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            bindingStore: store, sessionManager: manager
-        )
-
-        await coordinator.start()
-        await updateGate.waitUntilStarted()
-        #expect(coordinator.screen == .loading)
-        #expect(coordinator.canCancelAuthorization)
-
-        await coordinator.cancelAuthorization()
-        #expect(store.resetCount == 1)
-        #expect(manager.stopCount == 1)
-        #expect(coordinator.screen == .welcome)
-
-        updateGate.resume()
-        while !manager.updateFinished { await Task.yield() }
-        #expect(coordinator.screen == .welcome)
-
-        let retryBinding = RegisteredBinding(bindingId: UUID(), publicCertificate: "synthetic", carId: "synthetic-car")
-        let retryStore = ResettableCoordinatorBindingStore(binding: retryBinding, resetFails: false)
-        let retryManager = FakeRegistrationSessionManager(bindingStore: retryStore)
-        let retryGate = TestSaveGate()
-        retryManager.updateGate = retryGate
-        let retryCoordinator = AppCoordinator(
-            configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            bindingStore: retryStore, sessionManager: retryManager
-        )
-        await retryCoordinator.start()
-        await retryGate.waitUntilStarted()
-        retryGate.resume()
-        while !retryManager.updateFinished { await Task.yield() }
-        guard case .error = retryCoordinator.screen else {
-            Issue.record("A failed initial token attempt should expose authorization retry")
-            return
-        }
-        retryManager.updateFinished = false
-        let retryGate2 = TestSaveGate()
-        retryManager.updateGate = retryGate2
-        let retryTask = Task { await retryCoordinator.retry() }
-        await retryGate2.waitUntilStarted()
-        #expect(retryCoordinator.screen == .loading)
-        #expect(retryCoordinator.canCancelAuthorization)
-        #expect(retryManager.updateCount == 2)
-        await retryCoordinator.cancelAuthorization()
-        #expect(retryStore.resetCount == 1)
-        #expect(retryManager.stopCount == 1)
-        #expect(retryCoordinator.screen == .welcome)
-        retryGate2.resume()
-        await retryTask.value
-        #expect(retryCoordinator.screen == .welcome)
+        #expect(coordinator.webLoadingImageName == nil)
     }
 
     @Test func test_camera_settings_return_requires_current_scan_intent() async {
@@ -176,36 +188,6 @@ struct CoordinatorTests {
         #expect(coordinator.screen == .scanner)
         await coordinator.scannerDidProduce(Self.qrURL)
         #expect(store.beginCount == 1)
-    }
-
-    @Test func test_lateBeginRegistrationCannotResetNewScenarioBinding() async {
-        let store = RegistrationCoordinatorBindingStore()
-        let beginGate = TestSaveGate()
-        store.beginGate = beginGate
-        let manager = FakeRegistrationSessionManager(bindingStore: store)
-        let coordinator = AppCoordinator(
-            configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            bindingStore: store, sessionManager: manager,
-            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
-        )
-        await coordinator.start()
-        await coordinator.beginCameraScan()
-        let oldRegistration = Task { await coordinator.scannerDidProduce(Self.qrURL) }
-        await beginGate.waitUntilStarted()
-
-        await coordinator.cancelAuthorization()
-        await coordinator.beginCameraScan()
-        await coordinator.scannerDidProduce(Self.qrURL)
-        let newBinding = store.registeredBinding
-        #expect(newBinding != nil)
-        #expect(store.beginCount == 2)
-        #expect(store.resetCount == 1)
-
-        beginGate.resume()
-        await oldRegistration.value
-        #expect(store.resetCount == 1)
-        let restoredBinding = try? await store.restore()
-        #expect(restoredBinding == newBinding)
     }
 
     @Test func test_restoreRetryWithUnexpectedBindingStaysInRestoreWithoutAuthOrWeb() async {
@@ -451,66 +433,6 @@ struct CoordinatorTests {
         } else {
             Issue.record("A saved binding must use the token retry context")
         }
-    }
-
-    @Test func test_cancel_during_save_cleans_late_registered_result() async throws {
-        let store = RegistrationCoordinatorBindingStore()
-        let saveGate = TestSaveGate()
-        store.saveGate = saveGate
-        let manager = FakeRegistrationSessionManager(bindingStore: store)
-        let factory = FakeWebSessionFactory()
-        let coordinator = AppCoordinator(
-            configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            sessionFactory: factory, bindingStore: store, sessionManager: manager,
-            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
-        )
-        await coordinator.start()
-        await coordinator.beginCameraScan()
-        let registration = Task { await coordinator.scannerDidProduce(Self.qrURL) }
-        await saveGate.waitUntilStarted()
-
-        if let scenario = coordinator.activeScenarioID {
-            coordinator.nativeFirstFrameDidRender(scenarioID: scenario)
-        }
-        #expect(factory.sessions.isEmpty)
-
-        await coordinator.cancelAuthorization()
-        await saveGate.resume()
-        await registration.value
-
-        #expect(store.resetCount == 1)
-        #expect(try await store.restore() == nil)
-        #expect(manager.currentSession == nil)
-        #expect(!coordinator.isWebViewOpen)
-        #expect(coordinator.screen == .welcome)
-    }
-
-    @Test func test_cancel_after_jwt_before_reveal_resets_binding() async throws {
-        let store = RegistrationCoordinatorBindingStore()
-        let manager = FakeRegistrationSessionManager(bindingStore: store)
-        let factory = FakeWebSessionFactory()
-        let coordinator = AppCoordinator(
-            configuration: LaunchConfiguration(arguments: [], variables: [:]),
-            sessionFactory: factory, bindingStore: store, sessionManager: manager,
-            cameraPermission: FakeCameraPermissionProvider(status: .authorized, requestResult: true)
-        )
-        await coordinator.start()
-        let welcomeScenario = try #require(coordinator.activeScenarioID)
-        coordinator.nativeFirstFrameDidRender(scenarioID: welcomeScenario)
-        await coordinator.beginCameraScan()
-        await coordinator.scannerDidProduce(Self.qrURL)
-        let webSession = try #require(factory.sessions.first)
-        let loadingScenario = try #require(coordinator.activeScenarioID)
-        coordinator.nativeFirstFrameDidRender(scenarioID: loadingScenario)
-        let preparedDuringRegistration = try #require(factory.sessions.last)
-
-        await coordinator.cancelAuthorization()
-        #expect(try await store.restore() == nil)
-        #expect(manager.currentSession == nil)
-        #expect(webSession.closeCount == 1)
-        #expect(preparedDuringRegistration.closeCount == 1)
-        #expect(!coordinator.isWebViewOpen)
-        #expect(coordinator.screen == .welcome)
     }
 
     @Test func test_marker_failure_after_reset_blocks_welcome_until_restore_retry() async {
@@ -780,6 +702,52 @@ struct CoordinatorTests {
         #expect(factory.sessions.isEmpty)
     }
 
+    @Test func test_unlink_reset_closes_prepared_webview_and_cleans_once() async throws {
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "car")
+        let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: false)
+        let factory = FakeWebSessionFactory()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory, bindingStore: store, sessionManager: manager
+        )
+        await coordinator.start()
+        coordinator.nativeFirstFrameDidRender(scenarioID: try #require(coordinator.activeScenarioID))
+        let webSession = try #require(factory.sessions.first)
+
+        await coordinator.resetBindingAndShowWelcome()
+
+        #expect(webSession.closeCount == 1)
+        #expect(manager.stopCount == 1)
+        #expect(store.resetCount == 1)
+        #expect(coordinator.screen == .welcome)
+    }
+
+    @Test func test_unlink_reset_keeps_cleanup_error_when_store_reset_fails() async throws {
+        let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "car")
+        let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: true)
+        let factory = FakeWebSessionFactory()
+        let manager = FakeRegistrationSessionManager(bindingStore: store)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: [], variables: [:]),
+            sessionFactory: factory, bindingStore: store, sessionManager: manager
+        )
+        await coordinator.start()
+        coordinator.nativeFirstFrameDidRender(scenarioID: try #require(coordinator.activeScenarioID))
+        let webSession = try #require(factory.sessions.first)
+
+        await coordinator.resetBindingAndShowWelcome()
+
+        #expect(webSession.closeCount == 1)
+        #expect(manager.stopCount == 1)
+        #expect(store.resetCount == 1)
+        if case .error(let presentation) = coordinator.screen {
+            #expect(presentation.retryContext == .cleanup(reason: .rebind, next: .restoreThenWelcome))
+        } else {
+            Issue.record("A failed unlink cleanup must remain actionable")
+        }
+    }
+
     @Test func test_reset_action_shows_welcome_only_after_store_is_empty() async throws {
         let binding = RegisteredBinding(bindingId: UUID(), publicCertificate: "fixture", carId: "car")
         let store = ResettableCoordinatorBindingStore(binding: binding, resetFails: false)
@@ -900,6 +868,26 @@ struct CoordinatorTests {
         for adapter in adapters.values {
             #expect(await (adapter as! CoordinatorOwnedDataAdapter).cleanCount == 1)
         }
+    }
+
+    @Test func test_environment_switch_keeps_illustration_cleared_during_pending_cleanup() async {
+        let cleanupGate = TestSaveGate()
+        let adapters = Self.makeOwnedDataAdapters(blocking: .keychain, gate: cleanupGate)
+        let coordinator = AppCoordinator(
+            configuration: LaunchConfiguration(arguments: ["--environment", "local"], variables: [:]),
+            bindingStore: CoordinatorBindingStore(result: .success(nil)),
+            sessionManager: CoordinatorSessionManager(),
+            ownedClientDataCleaner: OwnedClientDataCleaner(adapters: adapters)
+        )
+        coordinator.beginWebLoading()
+        coordinator.screen = .loading
+
+        let switchTask = Task { await coordinator.switchEnvironment(to: .prod) }
+        await cleanupGate.waitUntilStarted()
+        #expect(coordinator.webLoadingImageName == nil)
+
+        cleanupGate.resume()
+        await switchTask.value
     }
 
     @Test func test_environment_cleanup_failure_keeps_old_configuration_and_target() async {
@@ -1533,6 +1521,7 @@ private final class RegistrationCoordinatorBindingStore: BindingStoring, @unchec
     private var hasReset = false
     var saveGate: TestSaveGate?
     var beginGate: TestSaveGate?
+    var resetGate: TestSaveGate?
 
     init(resetFailures: Int = 0, restoreFailuresAfterReset: Int = 0) {
         self.resetFailures = resetFailures
@@ -1571,6 +1560,7 @@ private final class RegistrationCoordinatorBindingStore: BindingStoring, @unchec
 
     func reset() async throws {
         resetCount += 1
+        await resetGate?.wait()
         if resetFailures > 0 {
             resetFailures -= 1
             throw BindingStoreError.keychain(operation: "delete", status: -1)

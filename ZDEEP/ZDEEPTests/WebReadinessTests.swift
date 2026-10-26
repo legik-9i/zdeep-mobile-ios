@@ -220,6 +220,7 @@ struct WebReadinessTests {
         #expect(h.manager.updateCount == updateCount)
         #expect(h.web.loadCount == 1)
         #expect(h.web.lastLoadReason == .explicitRetry)
+        #expect(h.coordinator.webLoadingImageName?.hasPrefix("LoadingScene") == true)
     }
 
     @Test func test_web_retry_preserves_failed_full_navigation_url() async throws {
@@ -291,7 +292,7 @@ struct WebReadinessTests {
         #expect(h.coordinator.screen == nativeError)
     }
 
-    @Test func test_full_navigation_preserves_working_mode_and_shows_cancel() async throws {
+    @Test func test_full_navigation_after_first_reveal_does_not_repeat_illustration() async throws {
         let clock = TestSessionClock()
         let h = try await makeHarness(clock: clock)
         let original = h.beginDocument(reason: .initial)
@@ -302,7 +303,7 @@ struct WebReadinessTests {
         h.coordinator.webSessionDidEmit(.documentPreparing(navigation, url, .fullNavigation), scenarioID: h.scenarioID)
 
         #expect(h.coordinator.screen == .loading)
-        #expect(h.coordinator.canCancelAuthorization)
+        #expect(h.coordinator.webLoadingImageName == nil)
         #expect(h.manager.visibleCount == visibleCount)
     }
 
@@ -314,6 +315,7 @@ struct WebReadinessTests {
 
         h.coordinator.webSessionDidEmit(.processTerminated, scenarioID: h.scenarioID)
         #expect(h.web.recoveryCount == 1)
+        #expect(h.coordinator.webLoadingImageName == nil)
 
         let recoveredIdentity = h.beginDocument(reason: .processRecovery)
         try h.coordinator.acceptWebReady(recoveredIdentity, scenarioID: h.scenarioID, screen: .content)

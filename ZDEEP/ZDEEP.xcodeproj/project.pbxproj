@@ -32,6 +32,9 @@
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		7C83CE2C306F6FC900F39E01 /* ZDEEP */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B00100000000000000000001 /* Exceptions for "ZDEEP" folder in "ZDEEP" target */,
+			);
 			path = ZDEEP;
 			sourceTree = "<group>";
 		};
@@ -46,6 +49,16 @@
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B00100000000000000000001 /* Exceptions for "ZDEEP" folder in "ZDEEP" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Web/AGENTS.md,
+			);
+			target = 7C83CE29306F6FC900F39E01 /* ZDEEP */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		7C83CE27306F6FC900F39E01 /* Frameworks */ = {

@@ -11,6 +11,8 @@ import SwiftUI
 @MainActor
 struct ContentView: View {
     @ObservedObject var coordinator: AppCoordinator
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 #if DEBUG
     @State private var isShowingDebugPanel = false
 #endif
@@ -24,7 +26,7 @@ struct ContentView: View {
             if let session = coordinator.activeWebSession {
                 WebViewHost(session: session, isVisible: coordinator.isWebViewOpen)
                     .ignoresSafeArea(.container, edges: .bottom)
-                    .opacity(coordinator.isWebViewOpen ? 1 : 0)
+                    .opacity(coordinator.isWebViewOpen || (coordinator.screen == .loading && coordinator.webLoadingImageName != nil) ? 1 : 0)
                     .allowsHitTesting(coordinator.isWebViewOpen)
                     .accessibilityHidden(!coordinator.isWebViewOpen)
             }
@@ -48,10 +50,9 @@ struct ContentView: View {
                     onBack: { coordinator.cancelCameraScan() }
                 )
             case .loading:
-                NativeLoadingView(
-                    canCancel: coordinator.canCancelAuthorization,
-                    onCancel: { Task { await coordinator.cancelAuthorization() } }
-                )
+                if coordinator.webLoadingImageName == nil {
+                    NativeLoadingView()
+                }
             case .web:
                 EmptyView()
             case .error(let presentation):
@@ -63,13 +64,37 @@ struct ContentView: View {
                 )
             }
             if coordinator.screen != .logo, let scenarioID = coordinator.activeScenarioID {
-                FirstFrameProbe(scenarioID: scenarioID) { coordinator.nativeFirstFrameDidRender(scenarioID: $0) }
-                    .frame(width: 0, height: 0)
-                    .accessibilityHidden(true)
+                FirstFrameProbe(scenarioID: scenarioID) {
+                    coordinator.setLaunchTheme(colorScheme)
+                    coordinator.nativeFirstFrameDidRender(scenarioID: $0)
+                }
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+            }
+            if let imageName = coordinator.webLoadingImageName,
+               coordinator.screen == .loading || coordinator.screen == .web {
+                WebLoadingView(imageName: imageName)
+                    .opacity(coordinator.screen == .web ? 0 : 1)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(coordinator.screen == .web)
+                    .animation(.easeOut(duration: reduceMotion ? 0 : 0.25), value: coordinator.screen == .web)
+                    .task(id: coordinator.screen == .web ? imageName : nil) {
+                        guard coordinator.screen == .web else { return }
+                        if reduceMotion {
+                            coordinator.clearWebLoading()
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(250))
+                        if coordinator.screen == .web, coordinator.webLoadingImageName == imageName {
+                            coordinator.clearWebLoading()
+                        }
+                    }
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WelcomeStyle.background.ignoresSafeArea())
+        .onChange(of: colorScheme) { _, colorScheme in coordinator.setLaunchTheme(colorScheme) }
 #if DEBUG
         .overlay(alignment: .topTrailing) {
             DebugOverlay { isShowingDebugPanel = true }

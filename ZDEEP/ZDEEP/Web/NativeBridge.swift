@@ -14,6 +14,7 @@ final class NativeBridge: NSObject, WebDocumentBridgeHandling, WKScriptMessageHa
 
     private weak var session: WebSession?
     private let manager: any SessionManaging
+    private let onUnlinkCar: () -> Void
     private let onReady: (WebDocumentIdentity, WebReadyScreen) throws -> Void
     private var subscription: (any CancellationHandle)?
     private var currentIdentity: WebDocumentIdentity?
@@ -23,9 +24,11 @@ final class NativeBridge: NSObject, WebDocumentBridgeHandling, WKScriptMessageHa
     private var sequence = 0
     private var appState = "foreground"
     private var acceptedReadyDocuments: Set<UUID> = []
+    private var acceptedUnlinkDocuments: Set<UUID> = []
     private var isClosed = false
 
     static let handlerName = "zdeepNative"
+    static let version = "0.0.2"
     static let bootstrapSource: String? = {
         guard let url = Bundle(for: NativeBridge.self).url(forResource: "BridgeBootstrap", withExtension: "js"),
               let source = try? String(contentsOf: url, encoding: .utf8) else { return nil }
@@ -35,10 +38,12 @@ final class NativeBridge: NSObject, WebDocumentBridgeHandling, WKScriptMessageHa
     init(
         session: WebSession,
         manager: any SessionManaging,
+        onUnlinkCar: @escaping () -> Void = {},
         onReady: @escaping (WebDocumentIdentity, WebReadyScreen) throws -> Void
     ) {
         self.session = session
         self.manager = manager
+        self.onUnlinkCar = onUnlinkCar
         self.onReady = onReady
         super.init()
         session.webView.configuration.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: Self.handlerName)
@@ -149,6 +154,12 @@ final class NativeBridge: NSObject, WebDocumentBridgeHandling, WKScriptMessageHa
                 case "getSession": value = .success(WebviewSession(try await self.getSession()))
                 case "recoverUnauthorized": value = .success(try await self.recoverUnauthorized())
                 case "getHostState": value = .success(BridgeHostState(appState: self.appState, sequence: self.sequence))
+                case "unlinkCar":
+                    if !self.acceptedUnlinkDocuments.contains(identity.documentId) {
+                        self.acceptedUnlinkDocuments.insert(identity.documentId)
+                        self.onUnlinkCar()
+                    }
+                    value = .success(BridgeNull.value)
                 case "reportReady":
                     guard let screen = call.request.params?.base as? String,
                           let screen = WebReadyScreen(rawValue: screen) else {

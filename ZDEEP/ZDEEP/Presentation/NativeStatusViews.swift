@@ -17,10 +17,6 @@ struct StartupLogoView: View {
 }
 
 struct NativeLoadingView: View {
-    let canCancel: Bool
-    let onCancel: () -> Void
-    @State private var isConfirmingUnbind = false
-
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
@@ -29,22 +25,11 @@ struct NativeLoadingView: View {
             Text("Загрузка")
                 .font(WelcomeStyle.font(.medium, size: 16, relativeTo: .body))
                 .foregroundStyle(WelcomeStyle.text)
-            if canCancel {
-                NativeActionButton(title: "Отвязать автомобиль", isPrimary: false) {
-                    isConfirmingUnbind = true
-                }
-            }
             Spacer()
         }
         .padding(.horizontal, WelcomeStyle.pageHorizontalInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WelcomeStyle.background.ignoresSafeArea())
-        .alert("Подтвердите действие", isPresented: $isConfirmingUnbind) {
-            Button("Отмена", role: .cancel) {}
-            Button("Отвязать автомобиль", role: .destructive, action: onCancel)
-        } message: {
-            Text("Привязка на этом телефоне будет удалена. Для входа потребуется снова отсканировать QR-код машины")
-        }
     }
 }
 

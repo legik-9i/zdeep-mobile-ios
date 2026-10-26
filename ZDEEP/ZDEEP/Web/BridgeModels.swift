@@ -72,7 +72,7 @@ struct NativeBridgeRequest: Equatable {
 
     init?(documentId: String, method: String, params: Any?) {
         switch method {
-        case "getSession", "recoverUnauthorized", "getHostState":
+        case "getSession", "recoverUnauthorized", "getHostState", "unlinkCar":
             guard params is NSNull else { return nil }
             self.params = nil
         case "reportReady":

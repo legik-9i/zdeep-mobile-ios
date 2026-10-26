@@ -17,6 +17,14 @@ final class NativePresentationUITests: XCTestCase {
     }
 
     @MainActor
+    func test_genericLoadingHasNoUnlinkAction() {
+        let app = launchFixture("loading")
+
+        XCTAssertTrue(app.staticTexts["Загрузка"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Отвязать автомобиль"].exists)
+    }
+
+    @MainActor
     func test_registeredError_showsRetryAndRebindWithAccessibleConfirmation() {
         let app = launchFixture("registered")
 

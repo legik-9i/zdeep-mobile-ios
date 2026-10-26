@@ -140,7 +140,6 @@ enum CleanupNextStep: Equatable {
 }
 
 enum LocalResetReason: Equatable {
-    case cancel
     case rebind
     case failedRegistration
     case storageReset

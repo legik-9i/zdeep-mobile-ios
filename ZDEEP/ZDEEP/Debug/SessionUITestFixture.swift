@@ -210,7 +210,7 @@ struct SessionUITestFixture: View {
             case .cameraRestricted:
                 CameraPermissionView(status: .restricted, onSettings: { record("SETTINGS") }, onBack: { record("BACK") })
             case .loading:
-                NativeLoadingView(canCancel: true, onCancel: { record("CANCEL") })
+                NativeLoadingView()
             case .logo:
                 StartupLogoView()
             }

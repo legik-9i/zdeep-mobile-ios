@@ -18,6 +18,7 @@
         getSession: () => send('getSession'),
         recoverUnauthorized: () => send('recoverUnauthorized'),
         getHostState: () => send('getHostState'),
+        unlinkCar: () => { send('unlinkCar').catch(() => {}); },
         reportReady: ready => send('reportReady', ready).then(() => undefined)
     });
     window.__zdeepReceiveNativeEvent = (capturedDocumentId, name, detail) => {
