@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WelcomeView: View {
     var onScan: () -> Void = {}
+    var onHelp: () -> Void = {}
     @ScaledMetric(relativeTo: .body) private var bodyLineSpacing: CGFloat = 6.4
 
     var body: some View {
@@ -117,7 +118,7 @@ struct WelcomeView: View {
             }
             .buttonStyle(.plain)
 
-            Button(action: {}) {
+            Button(action: onHelp) {
                 HStack(spacing: 12) {
                     Image("WelcomeHelp")
                         .resizable()

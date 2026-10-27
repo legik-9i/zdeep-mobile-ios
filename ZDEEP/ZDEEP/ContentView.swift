@@ -13,6 +13,7 @@ struct ContentView: View {
     @ObservedObject var coordinator: AppCoordinator
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isShowingWelcomeAbout = false
 #if DEBUG
     @State private var isShowingDebugPanel = false
 #endif
@@ -34,7 +35,10 @@ struct ContentView: View {
             case .logo:
                 StartupLogoView()
             case .welcome:
-                WelcomeView(onScan: { Task { await coordinator.beginCameraScan() } })
+                WelcomeView(
+                    onScan: { Task { await coordinator.beginCameraScan() } },
+                    onHelp: { isShowingWelcomeAbout = true }
+                )
             case .scanner:
                 scannerContent
             case .cameraPermissionDenied:
@@ -94,6 +98,11 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WelcomeStyle.background.ignoresSafeArea())
+        .sheet(isPresented: $isShowingWelcomeAbout) {
+            WelcomeAboutSheet(url: coordinator.endpoints.web.appendingPathComponent("about"))
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
         .onChange(of: colorScheme) { _, colorScheme in coordinator.setLaunchTheme(colorScheme) }
 #if DEBUG
         .overlay(alignment: .topTrailing) {
