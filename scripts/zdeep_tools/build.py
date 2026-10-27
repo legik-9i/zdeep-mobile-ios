@@ -4,7 +4,9 @@ import hashlib
 import json
 import plistlib
 import subprocess
+import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -92,6 +94,32 @@ class BuildManager:
         (destination / "build.json").write_text(json.dumps(metadata, indent=2))
         self.cache[fingerprint] = xctestruns[-1]
         return xctestruns[-1]
+
+    def build_ipa(self) -> Path:
+        """Build an unsigned iPhone app and package it for later re-signing."""
+        timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+        destination = self.artifacts / "ipa"
+        destination.mkdir(parents=True, exist_ok=True)
+        ipa = destination / f"zagent-ios-{timestamp}.ipa"
+        with tempfile.TemporaryDirectory(dir=destination) as work:
+            work = Path(work)
+            derived = work / "DerivedData"
+            app = derived / "Build/Products/Debug-iphoneos/ZDEEP.app"
+            payload = work / "Payload"
+            command = [
+                "xcodebuild", "build", "-project", str(self.root / "ZDEEP/ZDEEP.xcodeproj"),
+                "-scheme", "ZDEEP", "-configuration", "Debug", "-sdk", "iphoneos",
+                "-destination", "generic/platform=iOS", "-derivedDataPath", str(derived),
+                "-clonedSourcePackagesDirPath", str(self.artifacts / "device-derived/SourcePackages"),
+                "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO",
+            ]
+            self.runner(command, cwd=self.root, check=True)
+            if not app.is_dir():
+                raise BuildError(f"xcodebuild завершился без iPhone-сборки: {app}")
+            (payload / "ZDEEP.app").parent.mkdir()
+            self.runner(["ditto", str(app), str(payload / "ZDEEP.app")], check=True)
+            self.runner(["ditto", "-c", "-k", "--keepParent", str(payload), str(ipa)], check=True)
+        return ipa
 
     @staticmethod
     def _configure_xctestrun(source: Path, destination: Path, runtime_settings: dict[str, str]) -> None:

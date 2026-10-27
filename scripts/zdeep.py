@@ -45,6 +45,7 @@ def parser():
     commands = root.add_subparsers(dest="command", required=True)
     build = commands.add_parser("build-tests", help="Собрать тестовые targets")
     build.add_argument("--simulator", required=True, help="UDID симулятора")
+    commands.add_parser("build-ipa", help="Собрать неподписанный Debug IPA для iPhone и последующего переподписывания")
     test = commands.add_parser("test", help="Запустить автоматические тесты в local")
     test.add_argument("--environment", choices=["local"], required=True)
     test.add_argument("--suite", choices=["unit", "integration", "ui", "all"], required=True)
@@ -86,6 +87,9 @@ def main(argv=None):
         if args.command == "build-tests":
             artifact = BuildManager(ROOT).build(args.simulator)
             print(f"Тестовая сборка сохранена: {artifact}")
+        elif args.command == "build-ipa":
+            artifact = BuildManager(ROOT).build_ipa()
+            print(f"IPA для переподписывания сохранён: {artifact}")
         elif args.command == "preflight":
             if args.suite == "unit":
                 print("Для unit-набора проверка доступности API не требуется")
