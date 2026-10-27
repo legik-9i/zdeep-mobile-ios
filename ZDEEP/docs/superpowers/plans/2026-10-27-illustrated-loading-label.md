@@ -13,11 +13,12 @@
 ## Общие ограничения
 
 - Обычный экран `NativeLoadingView` сохраняет подпись «Загрузка».
-- Полноэкранная картинка и ThinkingOrb остаются без изменений.
+- Полноэкранная картинка и ThinkingOrb остаются; VoiceOver сообщает «Загрузка» через доступное имя спиннера.
 
 ## На что обратить внимание
 
 - На обычном экране ожидания подпись остаётся; это проверяет существующий общий UI-тест загрузки.
+- На иллюстрированном экране VoiceOver по-прежнему получает статус ожидания; это проверяет новый UI-тест.
 
 ---
 
@@ -33,22 +34,22 @@
 
 - [x] **Шаг 1: написать падающие тесты**
 
-Обновить `test_syntheticQrStartsSingleRegistrationWithoutLoadingUnlinkAction` и `test_coldRestoreLoadingHasNoUnlinkAction`: ждать `webLoadingScreen` и проверять отсутствие `app.staticTexts["Загрузка"]`.
+Обновить `test_syntheticQrStartsSingleRegistrationWithoutLoadingUnlinkAction` и `test_coldRestoreLoadingHasNoUnlinkAction`: ждать `webLoadingScreen` и проверять отсутствие `app.staticTexts["Загрузка"]`. В первом тесте также проверить доступный элемент `webLoadingStatus` с меткой «Загрузка».
 
 - [x] **Шаг 2: проверить ожидаемое падение**
 
 Запустить каждый из тестов отдельно командой `python3 scripts/zdeep.py test --environment local --suite ui --only 'ZDEEPUITests/AuthorizationUITests/<имя-теста>()' --simulator 0DDEE416-EECF-4BF3-8F15-BA93A980033A`.
 
-Ожидание: иллюстрированный экран найден, затем проверка отсутствия «Загрузка» падает, потому что текущий экран показывает эту подпись.
+Ожидание: до правки тест падает, потому что нет доступного элемента `webLoadingStatus` с меткой «Загрузка».
 
 - [x] **Шаг 3: внести минимальную правку**
 
-Удалить `Text("Загрузка")` и его оформление из `WebLoadingView`; оставить картинку, ThinkingOrb и верхний отступ.
+Удалить видимый `Text("Загрузка")` и его оформление из `WebLoadingView`; назначить ThinkingOrb доступную метку «Загрузка», оставив картинку и верхний отступ.
 
 - [x] **Шаг 4: проверить целевые сценарии и UI-набор**
 
-Оба теста иллюстрированной загрузки и существующий тест обычной загрузки проходят. Полный UI-набор запустил 25 тестов и сообщил о падениях `DebugPanelUITests.test_preparedWebviewDisablesJavaScriptUntilReady` и `DebugPanelUITests.test_unreadyDebugPanelKeepsJavaScriptResultPlaceholder`: в каждом два упавших утверждения о контроле результата JavaScript. После вывода сводки тестовый процесс завис и был остановлен.
+После ревью добавлена UI-проверка: VoiceOver видит у ThinkingOrb подпись «Загрузка», а видимого текста на иллюстрированном экране нет. Проверка прошла RED→GREEN. Оба сценария иллюстрированной загрузки и тест обычной загрузки прошли. Полный UI-набор завершил 25 тестов; четыре утверждения упали в `DebugPanelUITests.test_preparedWebviewDisablesJavaScriptUntilReady` и `DebugPanelUITests.test_unreadyDebugPanelKeepsJavaScriptResultPlaceholder` (контрол результата JavaScript нет). После сводки runner завис и был остановлен.
 
-- [ ] **Шаг 5: закоммитить**
+- [x] **Шаг 5: закоммитить**
 
-Закоммитить спецификацию, план, тесты и правку экрана одним коммитом с коротким сообщением.
+Спецификация, план, тесты и экран сохранены в коммитах `97468a3` и последующем коммите проверки доступности.

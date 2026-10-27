@@ -35,6 +35,9 @@ final class AuthorizationUITests: XCTestCase {
 
         let webLoadingScreen = app.descendants(matching: .any)["webLoadingScreen"]
         XCTAssertTrue(webLoadingScreen.waitForExistence(timeout: 5))
+        let loadingStatus = app.descendants(matching: .any)["webLoadingStatus"]
+        XCTAssertTrue(loadingStatus.waitForExistence(timeout: 5))
+        XCTAssertEqual(loadingStatus.label, "Загрузка")
         XCTAssertFalse(app.staticTexts["Загрузка"].exists)
         XCTAssertEqual(app.staticTexts["registration-count"].label, "pair 1 · complete 1")
         XCTAssertFalse(app.staticTexts["fixture.qr.car-token"].exists)

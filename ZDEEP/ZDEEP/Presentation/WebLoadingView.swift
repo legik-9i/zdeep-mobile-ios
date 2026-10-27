@@ -35,7 +35,9 @@ struct WebLoadingView: View {
                     .accessibilityHidden(true)
 
                 ThinkingOrb(state: .connecting, size: .px64, theme: .light)
-                    .accessibilityHidden(true)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Загрузка")
+                    .accessibilityIdentifier("webLoadingStatus")
                     .frame(maxWidth: .infinity)
                     .padding(.top, geometry.size.height * 0.14)
             }
