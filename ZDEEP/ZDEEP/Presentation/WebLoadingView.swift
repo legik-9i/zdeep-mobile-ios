@@ -34,17 +34,10 @@ struct WebLoadingView: View {
                     }
                     .accessibilityHidden(true)
 
-                VStack(spacing: 8) {
-                    ThinkingOrb(state: .connecting, size: .px64, theme: .light)
-                        .accessibilityHidden(true)
-                    Text("Загрузка")
-                        .font(WelcomeStyle.font(.medium, size: 16, relativeTo: .body))
-                        .foregroundStyle(WelcomeStyle.text)
-                        .shadow(color: .white.opacity(0.45), radius: 8)
-                        .accessibilityIdentifier("webLoadingLabel")
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, geometry.size.height * 0.14)
+                ThinkingOrb(state: .connecting, size: .px64, theme: .light)
+                    .accessibilityHidden(true)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, geometry.size.height * 0.14)
             }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             .clipped()
