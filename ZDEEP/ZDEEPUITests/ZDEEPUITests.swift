@@ -93,6 +93,30 @@ final class ZDEEPUITests: XCTestCase {
     }
 
     @MainActor
+    func testWelcomeHelpOpensAboutAndDismissesAfterLoadFailure() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--environment", "local",
+            "--ui-test-empty-binding",
+            "--web-url", "http://127.0.0.1:1",
+        ]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["Как подключить автомобиль"].waitForExistence(timeout: 10))
+        app.buttons["Как подключить автомобиль"].tap()
+
+        let loadError = app.staticTexts["Не удалось загрузить страницу"]
+        XCTAssertTrue(loadError.waitForExistence(timeout: 10))
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.08)).press(
+            forDuration: 0.1,
+            thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+        )
+        XCTAssertTrue(loadError.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Как подключить автомобиль"].isHittable)
+    }
+
+    @MainActor
     func testLaunchPerformance() throws {
         // This measures how long it takes to launch your application.
         measure(metrics: [XCTApplicationLaunchMetric()]) {

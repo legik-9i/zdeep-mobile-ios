@@ -23,7 +23,6 @@ struct WelcomeAboutSheet: View {
             }
         }
         .background(WelcomeStyle.background)
-        .accessibilityIdentifier("welcomeAboutSheet")
         .onAppear { didFailLoading = false }
     }
 }
