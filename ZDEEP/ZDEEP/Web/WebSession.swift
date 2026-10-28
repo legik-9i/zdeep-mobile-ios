@@ -62,6 +62,8 @@ final class WebSession: NSObject, WebSessionHandle, ObservableObject {
         webView.isInspectable = true
 #endif
         webView.allowsBackForwardNavigationGestures = false
+        // Контент прокручивается внутри HTML; внешний отскок перехватывает жесты списка.
+        webView.scrollView.bounces = false
         self.trustedURL = trustedURL
         self.openExternalURL = openExternalURL ?? { url in
             Task { @MainActor in UIApplication.shared.open(url) }
