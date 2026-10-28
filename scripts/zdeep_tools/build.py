@@ -251,7 +251,7 @@ class BuildManager:
         if suite in {"unit", "integration", "all"}:
             settings = {**settings, "ZDEEP_PASSIVE_TEST_HOST": "1"}
         self._configure_xctestrun(artifact, configured, settings)
-        command = ["xcodebuild", "test-without-building", "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={simulator}", "-resultBundlePath", str(results / "Tests.xcresult")]
+        command = ["xcodebuild", "test-without-building", "-xctestrun", str(configured), "-destination", f"platform=iOS Simulator,id={simulator}", "-resultBundlePath", str(results / "Tests.xcresult"), "-collect-test-diagnostics", "never"]
         selectors = {
             "unit": ["ZDEEPTests"],
             "integration": ["ZDEEPTests/WebSessionIntegrationTests"],

@@ -65,6 +65,14 @@ class BuildManagerTests(unittest.TestCase):
         self.assertEqual(len(build_calls), 1)
         self.assertEqual(len(test_calls), 1)
 
+    def test_all_suites_disable_automatic_simulator_diagnostics(self):
+        for suite in ("unit", "integration", "ui", "all"):
+            with self.subTest(suite=suite):
+                self.runner.reset_mock()
+                self.manager.run(suite, "local", "SIM-1")
+                command = next(call.args[0] for call in self.runner.call_args_list if "test-without-building" in call.args[0])
+                self.assertIn(["-collect-test-diagnostics", "never"], [command[i:i + 2] for i in range(len(command) - 1)])
+
     def test_all_test_suites_use_ad_hoc_signed_build(self):
         for suite in ("unit", "integration", "ui", "all"):
             with self.subTest(suite=suite):

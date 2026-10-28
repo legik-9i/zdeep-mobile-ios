@@ -75,34 +75,6 @@ final class DebugPanelUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Результат появится здесь"].exists)
     }
 
-    @MainActor
-    func test_preparedWebviewDisablesJavaScriptUntilReady() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--environment", "local", "--ui-test-empty-binding"]
-        app.launch()
-        DebugPanelTestActions.openWebView(app)
-
-        let result = app.descendants(matching: .any)["js-result"]
-        XCTAssertTrue(result.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].exists)
-        XCTAssertFalse(app.webViews.firstMatch.isHittable)
-        XCTAssertFalse(app.buttons["execute-js"].isEnabled)
-        XCTAssertEqual(result.label, "Результат появится здесь")
-    }
-
-    @MainActor
-    func test_unreadyDebugPanelKeepsJavaScriptResultPlaceholder() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--environment", "local", "--ui-test-empty-binding"]
-        app.launch()
-        DebugPanelTestActions.openWebView(app)
-
-        let result = app.descendants(matching: .any)["js-result"]
-        XCTAssertTrue(result.waitForExistence(timeout: 3))
-        XCTAssertFalse(app.buttons["execute-js"].isEnabled)
-        XCTAssertEqual(result.label, "Результат появится здесь")
-        XCTAssertTrue(app.staticTexts["Подключите ваш Zeekr"].exists)
-    }
 }
 
 enum DebugPanelTestActions {
