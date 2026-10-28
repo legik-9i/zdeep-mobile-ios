@@ -99,7 +99,7 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WelcomeStyle.background.ignoresSafeArea())
         .sheet(isPresented: $isShowingWelcomeAbout) {
-            WelcomeAboutSheet(url: coordinator.endpoints.web.appendingPathComponent("about"))
+            WelcomeAboutSheet(url: coordinator.endpoints.web.appendingPathComponent("about.html"))
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
