@@ -5,7 +5,7 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct WebLaunchURLTests {
-    @Test func test_preserves_environment_path_query_and_fragment() throws {
+    @Test func test_uses_index_html_and_preserves_environment_query_and_fragment() throws {
         for environment in AppEnvironment.allCases {
             var components = try #require(URLComponents(url: environment.endpoints.web, resolvingAgainstBaseURL: false))
             components.path = "/app"
@@ -16,7 +16,7 @@ struct WebLaunchURLTests {
             let resultComponents = try #require(URLComponents(url: result, resolvingAgainstBaseURL: false))
             let items = resultComponents.queryItems ?? []
 
-            #expect(resultComponents.path == "/app")
+            #expect(resultComponents.path == "/index.html")
             #expect(resultComponents.fragment == "section")
             #expect(items.contains(URLQueryItem(name: "keep", value: "one")))
             #expect(items.contains(URLQueryItem(name: "platform", value: "ios")))

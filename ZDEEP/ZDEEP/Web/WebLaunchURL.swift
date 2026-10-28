@@ -6,6 +6,7 @@ enum WebLaunchURL {
     static func make(baseURL: URL, appVersion: String, bridgeVersion: String, theme: String) -> URL {
         precondition(theme == "light" || theme == "dark")
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else { return baseURL }
+        components.path = "/index.html"
         let parameters = [
             URLQueryItem(name: "platform", value: "ios"),
             URLQueryItem(name: "nativeAppVersion", value: appVersion),
