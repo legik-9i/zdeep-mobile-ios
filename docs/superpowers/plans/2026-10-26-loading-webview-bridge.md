@@ -173,7 +173,7 @@ API проверить все callers в `App/`. Тесты `CoordinatorTests.sw
 
 ## Команды проверки и завершение
 
-Использовать `.agents/skills/ios-testing/SKILL.md`. Получить UDID через
+Использовать `.codex/skills/ios-testing/SKILL.md`. Получить UDID через
 `xcrun simctl list devices available`; ниже заменить `<UDID>` реальным.
 
 Промежуточная проверка задач:

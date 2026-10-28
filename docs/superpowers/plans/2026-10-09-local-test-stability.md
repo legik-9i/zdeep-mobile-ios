@@ -45,8 +45,8 @@
 | `ZDEEP/ZDEEPTests/CoordinatorTests.swift` | Изоляция unit-фикстур координатора |
 | `ZDEEP/ZDEEPTests/WebSessionIntegrationTests.swift` | Local-only окружение, ограниченные ожидания |
 | `ZDEEP/ZDEEPTests/WebSessionIntegrationTests+Bridge.swift` | Переиспользование существующей bridge-фикстуры при необходимости |
-| `.agents/skills/ios-testing/SKILL.md` | Матрица прогонов и критерии результатов |
-| `.agents/skills/ios-debugging/SKILL.md` | Отдельный контракт диагностики testing |
+| `.codex/skills/ios-testing/SKILL.md` | Матрица прогонов и критерии результатов |
+| `.codex/skills/ios-debugging/SKILL.md` | Отдельный контракт диагностики testing |
 | `docs/development/verification.md` | Актуальные команды и пометка исторических правил |
 | `docs/development/local-test-stability-verification.md` | Создать при выполнении: итоговая сводка и ограничения |
 
@@ -118,7 +118,7 @@
 
 ### Task 5. Скилы, документация и финальная приёмка
 
-**Файлы:** `.agents/skills/ios-testing/SKILL.md`, `.agents/skills/ios-debugging/SKILL.md`, `docs/development/verification.md`; создать `docs/development/local-test-stability-verification.md` после получения результатов.
+**Файлы:** `.codex/skills/ios-testing/SKILL.md`, `.codex/skills/ios-debugging/SKILL.md`, `docs/development/verification.md`; создать `docs/development/local-test-stability-verification.md` после получения результатов.
 
 **Интерфейсы:** актуальная инструкция содержит одну матрицу: автоматические тесты local; диагностика simulator local/test и iPhone test. Исторические результаты остаются фактами прошлых запусков и явно не задают сегодняшние правила.
 

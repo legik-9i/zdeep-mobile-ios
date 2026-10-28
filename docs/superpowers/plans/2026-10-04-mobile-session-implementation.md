@@ -571,4 +571,4 @@ guard case .welcome = coordinator.screen else {
 - Через Context7: `/swiftlang/swift` — ContinuousClock/Task cancellation; `/twostraws/codescanner` — `.once`, `.qr`, адаптер SwiftUI; `/websites/developer_apple_uikit` — display-link синхронизация. FirstFrameProbe использует доступный на iOS 17.6 CADisplayLink(target:selector:), не новый UIWindowScene.displayLink API.
 - [CodeScanner 2.5.2](https://github.com/twostraws/CodeScanner/releases/tag/2.5.2): фиксируем опубликованный релиз, без автоматического повышения версии.
 - WebKit/Keychain/URLSession источники и ограничения приведены в спецификациях компонентов; повторные проектные решения не вводятся.
-- [Готовые команды проверки](../../development/verification.md) и [.agents/skills/ios-testing/SKILL.md](../../../.agents/skills/ios-testing/SKILL.md): для этой функции правило пользователя «только local» имеет приоритет над примерами запуска test.
+- [Готовые команды проверки](../../development/verification.md) и [.codex/skills/ios-testing/SKILL.md](../../../.codex/skills/ios-testing/SKILL.md): для этой функции правило пользователя «только local» имеет приоритет над примерами запуска test.

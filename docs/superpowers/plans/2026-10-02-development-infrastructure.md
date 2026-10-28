@@ -44,7 +44,7 @@
 - `ZDEEP/ZDEEP/Debug/`: диагностические команды, события, транспорт, панель и плавающая кнопка.
 - `ZDEEP/ZDEEPTests/`: обычные и hosted-интеграционные тесты настоящего `WKWebView`.
 - `ZDEEP/ZDEEPUITests/`: кнопки, панель, переключение, повторное открытие; UI-тесты не подменяют интеграционные JS-проверки.
-- `.agents/skills/ios-testing/`, `ios-debugging/`, `ios-stitch-implementation/`: проектные инструкции.
+- `.codex/skills/ios-testing/`, `ios-debugging/`, `ios-stitch-implementation/`: проектные инструкции.
 
 ## Задача 1. Воспроизводимая сборка и повтор тестов
 
@@ -113,7 +113,7 @@
 
 ## Задача 6. Проектные навыки с практической проверкой
 
-**Файлы:** `.agents/skills/ios-testing/SKILL.md`, `.agents/skills/ios-debugging/SKILL.md`, `.agents/skills/ios-stitch-implementation/SKILL.md`, корневой `AGENTS.md`, `docs/development/verification.md`.
+**Файлы:** `.codex/skills/ios-testing/SKILL.md`, `.codex/skills/ios-debugging/SKILL.md`, `.codex/skills/ios-stitch-implementation/SKILL.md`, корневой `AGENTS.md`, `docs/development/verification.md`.
 
 - [ ] Применить навыки создания/редактирования навыков; описать назначение, условия применения, предусловия и реальные команды задач 1–5. Не определять повторно процесс Superpowers.
 - [ ] В ios-testing включить один пример meaningful Swift Testing-проверки и один пример JS-интеграционного ожидания; команды local/test, выбор одного теста, build-once/reuse и разбор ошибок. В ios-debugging — проверенные команды iPhone и ограничения.
