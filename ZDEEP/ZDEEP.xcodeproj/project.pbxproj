@@ -6,6 +6,11 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000004 /* CodeScanner in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000003 /* CodeScanner */; };
+		A10000000000000000000007 /* ThinkingOrbsKit in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000006 /* ThinkingOrbsKit */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		7C83CE38306F6FCA00F39E01 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -29,6 +34,16 @@
 		7C83CE41306F6FCB00F39E01 /* ZDEEPUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ZDEEPUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B00100000000000000000001 /* Exceptions for "ZDEEP" folder in "ZDEEP" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Web/AGENTS.md,
+			);
+			target = 7C83CE29306F6FC900F39E01 /* ZDEEP */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		7C83CE2C306F6FC900F39E01 /* ZDEEP */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -49,16 +64,6 @@
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
-
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		B00100000000000000000001 /* Exceptions for "ZDEEP" folder in "ZDEEP" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Web/AGENTS.md,
-			);
-			target = 7C83CE29306F6FC900F39E01 /* ZDEEP */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		7C83CE27306F6FC900F39E01 /* Frameworks */ = {
@@ -118,13 +123,13 @@
 				7C83CE2C306F6FC900F39E01 /* ZDEEP */,
 			);
 			name = ZDEEP;
-			productName = ZDEEP;
-			productReference = 7C83CE2A306F6FC900F39E01 /* ZDEEP.app */;
-			productType = "com.apple.product-type.application";
 			packageProductDependencies = (
 				A10000000000000000000003 /* CodeScanner */,
 				A10000000000000000000006 /* ThinkingOrbsKit */,
 			);
+			productName = ZDEEP;
+			productReference = 7C83CE2A306F6FC900F39E01 /* ZDEEP.app */;
+			productType = "com.apple.product-type.application";
 		};
 		7C83CE36306F6FCA00F39E01 /* ZDEEPTests */ = {
 			isa = PBXNativeTarget;
@@ -202,7 +207,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */,
-				A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries.dev" */,
+				A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7C83CE2B306F6FC900F39E01 /* Products */;
@@ -213,40 +218,6 @@
 				7C83CE36306F6FCA00F39E01 /* ZDEEPTests */,
 				7C83CE40306F6FCB00F39E01 /* ZDEEPUITests */,
 			);
-		};
-		A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/twostraws/CodeScanner";
-			requirement = {
-				kind = exactVersion;
-				version = 2.5.2;
-			};
-		};
-		A10000000000000000000003 /* CodeScanner */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */;
-			productName = CodeScanner;
-		};
-		A10000000000000000000004 /* CodeScanner in Frameworks */ = {
-			isa = PBXBuildFile;
-			productRef = A10000000000000000000003 /* CodeScanner */;
-		};
-		A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries.dev" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/Jakubantalik/Libraries.dev";
-			requirement = {
-				kind = revision;
-				revision = bcaf88f8a16a75fd95bf21e0747193ee3380a927;
-			};
-		};
-		A10000000000000000000006 /* ThinkingOrbsKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
-			productName = ThinkingOrbsKit;
-		};
-		A10000000000000000000007 /* ThinkingOrbsKit in Frameworks */ = {
-			isa = PBXBuildFile;
-			productRef = A10000000000000000000006 /* ThinkingOrbsKit */;
 		};
 /* End PBXProject section */
 
@@ -430,12 +401,14 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Камера нужна, чтобы отсканировать QR-код машины";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -476,12 +449,14 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Info.plist;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Камера нужна, чтобы отсканировать QR-код машины";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -646,6 +621,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/twostraws/CodeScanner";
+			requirement = {
+				kind = exactVersion;
+				version = 2.5.2;
+			};
+		};
+		A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Jakubantalik/Libraries.dev";
+			requirement = {
+				kind = revision;
+				revision = bcaf88f8a16a75fd95bf21e0747193ee3380a927;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A10000000000000000000003 /* CodeScanner */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000002 /* XCRemoteSwiftPackageReference "CodeScanner" */;
+			productName = CodeScanner;
+		};
+		A10000000000000000000006 /* ThinkingOrbsKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A10000000000000000000005 /* XCRemoteSwiftPackageReference "Libraries" */;
+			productName = ThinkingOrbsKit;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 7C83CE22306F6FC900F39E01 /* Project object */;
 	validationLevel = 1;
