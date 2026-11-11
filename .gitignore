@@ -1,4 +1,5 @@
 .artifacts/
+/build/
 .local/development.json
 __pycache__/
 *.py[cod]
